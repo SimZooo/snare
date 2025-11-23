@@ -1,7 +1,5 @@
 <script lang="ts">
-    import { onMount } from "svelte";
-    import { invoke } from "@tauri-apps/api/core"
-    import { listen } from "@tauri-apps/api/event"
+    import { listen, emit } from "@tauri-apps/api/event"
 
 	import { PaneGroup, Pane, PaneResizer } from "paneforge";
 
@@ -11,9 +9,9 @@
     import type { RequestEntry } from "./components/ResizableTable.svelte";
 
     let requests = $state([]);
-    let curr_id = $state(0);
     let selected_id = $state(0);
     let selected_entry: RequestEntry = $state();
+    let curr_id = $state(0);
 
     let requests_rows = [
         {name: "ID", default_size: 2},
@@ -31,12 +29,13 @@
     listen<string>("request-intercepted", (event) => {
         let entry = parse_request(event.payload);
         requests_cols.push(entry);
-        requests = [...requests, {id: curr_id, payload: event.payload}];
+        requests = [...requests, {id: entry.id, payload: event.payload}];
     });
 
     function parse_request(request: string) {
         curr_id += 1;
 
+        console.log(request);
         let req = request.raw.split('\r\n');
         let req_line = req[0].split(" ");
         let method = req_line[0];
@@ -50,6 +49,7 @@
 
         let result: RequestEntry = {
             id: curr_id,
+            uuid: request.id,
             method: method,
             path: path,
             destination: host,
@@ -90,6 +90,11 @@
             http_editor_text = requests.find((req) => req.id === selected_id).payload.raw;
         }
     });
+
+    function emit_forward(uuid: number) {
+        emit("forward-request", uuid);
+        console.log("Emitted forwarding ", uuid);
+    }
 </script>
 
 <PaneGroup direction="vertical" class="w-full h-full p-2 pl-4">
@@ -110,7 +115,7 @@
                         <select name="request_display_type" id="" class="">
                             <option value="original">Original</option>
                         </select>
-                        <button class="bg-[#25272D] p-1 rounded hover:cursor-pointer">
+                        <button class="bg-[#25272D] p-1 rounded hover:cursor-pointer" onclick={() => {if (selected_entry) { emit_forward(selected_entry.uuid) }}}>
                             Forward →
                         </button>
                     </div>

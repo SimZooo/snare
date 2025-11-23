@@ -6,6 +6,7 @@
 
     export type RequestEntry = {
         id: number,
+        uuid: string,
         method: string,
         destination: string,
         path: string,

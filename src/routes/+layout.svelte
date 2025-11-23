@@ -3,9 +3,9 @@
 	import "../app.css";
 
 	let pages = [
-		{ name: "Proxy", path: "/", image: "./proxy.png" },
+		{ name: "Intercept", path: "/", image: "./intercept.png" },
 		{ name: "Forward", path: "/settings", image: "./forward.png"  },
-		{ name: "Intercept", path: "/settings", image: "./proxy.png"  },
+		{ name: "Proxy", path: "/settings", image: "./proxy.png"  },
 		{ name: "Replay", path: "/settings", image: "./proxy.png"  },
 		{ name: "Automate", path: "/settings", image: "./proxy.png"  },
 		{ name: "Tamper", path: "/settings", image: "./proxy.png"  },

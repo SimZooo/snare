@@ -3,10 +3,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use serde::Serialize;
-use tauri::Emitter;
+use tauri::{Emitter, Listener};
+
+use uuid::Uuid;
 
 struct AppState {
     app_handle: tauri::AppHandle,
+    senders: Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>>,
 }
 
 #[derive(Clone, Serialize)]
@@ -16,6 +19,7 @@ struct AppRequest {
     headers: HashMap<String, String>,
     body: String,
     raw: String,
+    id: String
 }
 
 #[derive(Clone, Serialize)]
@@ -30,8 +34,19 @@ struct AppResponse {
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            let state = Arc::new(AppState {
+            let mut state = Arc::new(AppState {
                 app_handle: app.handle().clone(),
+                senders: Arc::new(tokio::sync::Mutex::new(HashMap::new()))
+            });
+            let senders_clone = state.senders.clone();
+            state.app_handle.listen("forward-request", move |event| {
+                let senders = senders_clone.clone();
+                tauri::async_runtime::spawn(async move {
+                    let uuid = event.payload().split("\"").collect::<Vec<&str>>()[1];
+                    if let Some(tx) = senders.lock().await.remove(uuid) {
+                        let _ = tx.send("".to_string());
+                    }
+                });
             });
             tauri::async_runtime::spawn(run_proxy(state));
             Ok(())
@@ -44,7 +59,7 @@ use hyper::{Client, Server, Request, Response, Body, StatusCode, Method};
 use hyper::service::{make_service_fn, service_fn};
 use std::{convert::Infallible, net::SocketAddr};
 
-async fn run_proxy(state: Arc<AppState>) {
+async fn run_proxy(mut state: Arc<AppState>) {
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
     
     // Clone the Arc for the service factory
@@ -105,18 +120,30 @@ async fn handle_request(
     raw_request.push_str("\r\n");
     raw_request.push_str(&body_str);
 
+    let uuid = Uuid::new_v4().to_string();
     let app_request = AppRequest {
         method: original_method.to_string(),
         uri: original_uri.clone(),
         headers,
         body: body_str.clone(),
         raw: raw_request,
+        id: uuid.clone(),
     };
 
     if let Err(e) = state.app_handle.emit("request-intercepted", &app_request) {
         eprintln!("Failed to emit request event: {}", e);
     } else {
         println!("Emitted event")
+    }
+
+    let (tx, mut rx) = tokio::sync::oneshot::channel::<String>();
+    state.senders.lock().await.insert(uuid.clone(), tx);
+    match rx.await {
+        Ok(id) => {
+            println!("Continuing {}", id);
+            let _ = state.app_handle.emit("request-sent", id.clone());
+        },
+        Err(e) => { eprintln!("Receiver error: {e}"); }
     }
     
     // Handle CONNECT method for HTTPS
@@ -155,8 +182,6 @@ async fn handle_request(
                 );
             }
 
-            let (tx, rx) = tokio::sync::oneshot::channel::<String>();
-            let _ = rx.await;
             // Create response object for frontend
             // Build raw HTTP packet for the response
             let reason = status.canonical_reason().unwrap_or("");
@@ -210,9 +235,6 @@ async fn handle_request(
                 eprintln!("Failed to emit error event: {}", emit_err);
             }
 
-            let (tx, rx) = tokio::sync::oneshot::channel::<String>();
-            let _ = rx.await;
-            
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(Body::from("Proxy error"))
