@@ -1,17 +1,40 @@
 <script lang="ts">
     import { listen, emit } from "@tauri-apps/api/event"
+    import { invoke } from "@tauri-apps/api/core";
 
 	import { PaneGroup, Pane, PaneResizer } from "paneforge";
 
-    import { EditorView } from "@codemirror/view";
+    import { EditorView, keymap } from "@codemirror/view";
     import CodeMirror from "svelte-codemirror-editor";
     import ResizableTable from "./components/ResizableTable.svelte";
     import type { RequestEntry } from "./components/ResizableTable.svelte";
+    import { select } from "three/tsl";
 
     let requests = $state([]);
+    let responses = $state([]);
+    let pending_responses = $state([]);
     let selected_id = $state(0);
     let selected_entry: RequestEntry = $state();
     let curr_id = $state(0);
+    let intercept_state = $state(false);
+
+    type HttpReqRecv = {
+        method: string
+        path: string,
+        host: string,
+        headers: object,
+        body: string,
+        cookies: object
+        id: string
+    };
+    
+    type HttpResRecv = {
+        id: string,
+        status: string,
+        headers: object,
+        body: string,
+        cookies: object,
+    };
 
     let requests_rows = [
         {name: "ID", default_size: 2},
@@ -26,42 +49,57 @@
     
     let requests_cols: RequestEntry[] = $state([]);
 
-    listen<string>("request-intercepted", (event) => {
+    listen<HttpReqRecv>("request-received", (event) => {
+        let payload = event.payload;
+
         let entry = parse_request(event.payload);
         requests_cols.push(entry);
-        requests = [...requests, {id: entry.id, payload: event.payload}];
+
+        requests = [...requests, {id: entry.id, packet: payload}];
+        pending_responses = pending_responses.filter((res) => {
+            if (res.id === entry.uuid) {
+                entry.status = res.status;
+                entry.state = "Responded";
+                responses = [...responses, res];
+                return false;
+            }
+            return true;
+        });
     });
 
-    function parse_request(request: string) {
+    function parse_request(request: HttpReqRecv): RequestEntry {
         curr_id += 1;
-
-        console.log(request);
-        let req = request.raw.split('\r\n');
-        let req_line = req[0].split(" ");
-        let method = req_line[0];
-        let path = req_line[1];
-        let host = req.find((line: string) => line.toLowerCase().startsWith("host")).split(" ")[1].split(":")[0];
-        let user_agent = req.find((line: string) => line.toLowerCase().startsWith("user-agent")).split(" ")[1];
-        let query = "";
-        let state = "";
-        let length = "";
-        let status = "";
 
         let result: RequestEntry = {
             id: curr_id,
             uuid: request.id,
-            method: method,
-            path: path,
-            destination: host,
-            user_agent: user_agent,
-            query: query,
-            state: state,
-            length: length,
+            method: request.method,
+            destination: request.host,
+            path: request.path,
+            query: "",
+            state: "No response",
+            length: request.body.length,
             status: status,
+            user_agent: request.headers["user-agent"] ?? ""
         };
 
         return result;
     }
+
+    listen<HttpResRecv>("response-received", (event) => {
+        let req = requests.find((req) => req.packet.id === event.payload.id);
+        let req_col = requests_cols.find((req_col) => req_col.id === req.id);
+
+        if (!req_col) {
+            pending_responses = [...pending_responses, event.payload];
+            return;
+        }
+
+        req_col.status = event.payload.status;
+        req_col.state = "Responded"
+
+        responses = [...responses, event.payload];
+    });
 
     let response_editor_text = $state("");
     let http_editor_text = $state("");
@@ -87,64 +125,122 @@
     $effect(() => {
         if (selected_id !== 0) {
             selected_entry = requests_cols.find((req) => req.id === selected_id);
-            http_editor_text = requests.find((req) => req.id === selected_id).payload.raw;
+            let req = requests.find((req) => req.id === selected_id);
+            http_editor_text = construct_request_packet(req);
+            let res = responses.find((res) => res.id === req.packet.id);
+            response_editor_text = construct_response_packet(res);
         }
     });
+
+    function construct_request_packet(request): string {
+        if (!request) { return "" };
+
+        let text = `${request.packet.method} ${request.packet.path} HTTP/1.1\r\n`;
+
+        for (const header in request.packet.headers) {
+            text += header + ": " + request.packet.headers[header] + "\r\n";
+        }
+        text += "\r\n";
+        text += request.packet.body;
+        return text
+    }
+
+    function construct_response_packet(response): string {
+        if (!response) { return "" };
+
+        let text = `HTTP/1.1 ${response.status}\r\n`;
+
+        for (const header in response.headers) {
+            text += header + ": " + response.headers[header] + "\r\n";
+        }
+        text += "\r\n";
+        text += response.body;
+        return text;
+    }
 
     function emit_forward(uuid: number) {
         emit("forward-request", uuid);
         console.log("Emitted forwarding ", uuid);
     }
+    
+    function clear_all() {
+        requests = [];
+        responses = [];
+        requests_cols = [];
+        response_editor_text = "";
+        http_editor_text = "";
+    }
 </script>
 
-<PaneGroup direction="vertical" class="w-full h-full p-2 pl-4">
-    <Pane defaultSize={40} class="bg-[#2F323A] rounded flex flex-col">
-        <div class="h-full w-full">
-            <ResizableTable rows={requests_rows} cols={requests_cols} bind:selected={selected_id}/>
+<div class="w-full h-full grid grid-rows-[4em_auto] pb-2 pr-2">
+    <div class="pl-6 w-full h-full items-center align-middle flex justify-between">
+        <div class="flex gap-2 items-center">
+            <div class="flex flex-col border rounded p-0.5 text-gray-500 border-gray-500 w-fit h-fit">
+                <input type="text" placeholder="Search requests" class="">
+            </div>
+            <button class="border-2 rounded text-gray-500 p-0.5 w-20">
+                Search
+            </button>
         </div>
-        <div class="w-full h-0.5 bg-[#25272D]">
+        <div class="flex flex-row gap-3">
+            <button class="border rounded p-1 hover:cursor-pointer" onclick={() => {clear_all()}}>
+                Clear
+            </button>
+            <button class="flex flex-col border rounded p-1 mr-5 hover:cursor-pointer button_{intercept_state ? "enabled" : "disabled"}" onclick={() => {intercept_state = !intercept_state; invoke("toggle_intercept", {interceptToggle: intercept_state});}}>
+                &gt;&gt;&nbsp;Intercept
+            </button>
         </div>
-    </Pane>
-    <PaneResizer class="h-1 cursor-col-resize" />
-    <Pane>
-        <PaneGroup direction="horizontal" class="">
-            <Pane class="bg-[#2F323A] rounded flex flex-col">
-                <div class="text-md w-full h-12 flex flex-row pl-3 items-center justify-between pr-5">
-                    <p>{selected_entry ? selected_entry.destination :  "" }</p>
-                    <div class="flex flex-row gap-4">
-                        <select name="request_display_type" id="" class="">
-                            <option value="original">Original</option>
-                        </select>
-                        <button class="bg-[#25272D] p-1 rounded hover:cursor-pointer" onclick={() => {if (selected_entry) { emit_forward(selected_entry.uuid) }}}>
-                            Forward →
-                        </button>
+    </div>
+
+    <PaneGroup direction="vertical" class="w-full h-full pl-4">
+        <Pane defaultSize={40} class="bg-[#2F323A] rounded flex flex-col">
+            <div class="h-full w-full overflow-auto">
+                <ResizableTable rows={requests_rows} cols={requests_cols} bind:selected={selected_id}/>
+            </div>
+            <div class="w-full h-0.5 bg-[#25272D]">
+            </div>
+        </Pane>
+        <PaneResizer class="h-1 cursor-col-resize" />
+        <Pane>
+            <PaneGroup direction="horizontal" class="">
+                <Pane class="bg-[#2F323A] rounded flex flex-col">
+                    <div class="text-md w-full h-12 flex flex-row pl-3 items-center justify-between pr-5">
+                        <p>{selected_entry ? selected_entry.destination :  "" }</p>
+                        <div class="flex flex-row gap-4">
+                            <select name="request_display_type" id="" class="">
+                                <option value="original">Original</option>
+                            </select>
+                            <button class="bg-[#25272D] p-1 rounded hover:cursor-pointer" onclick={() => {if (selected_entry) { }}}>
+                                Forward →
+                            </button>
+                        </div>
                     </div>
-                </div>
-                <div class="h-0.75 w-full bg-[#25272D]">
-                </div>
-                <CodeMirror bind:value={http_editor_text} class="w-full h-full flex-1 text-md" {extensions}/>
-                <div class="h-0.75 w-full bg-[#25272D]">
-                </div>
-                <div class="w-full h-10">
-                </div>
-            </Pane>
-            <PaneResizer class="w-1 cursor-col-resize" />
-            <Pane class="bg-[#2F323A] rounded flex flex-col">
-                <div class="text-md w-full h-12 flex flex-row pl-3 items-center justify-between pr-5">
-                    <p>Reponse</p>
-                    <p>18112 bytes | 27ms</p>
-                </div>
-                <div class="h-0.75 w-full bg-[#25272D]">
-                </div>
-                <CodeMirror bind:value={response_editor_text} class="w-full h-full flex-1 text-md" {extensions}/>
-                <div class="h-0.75 w-full bg-[#25272D]">
-                </div>
-                <div class="w-full h-10">
-                </div>
-            </Pane>
-        </PaneGroup>
-    </Pane>
-</PaneGroup>
+                    <div class="h-0.75 w-full bg-[#25272D]">
+                    </div>
+                    <CodeMirror bind:value={http_editor_text} class="w-full h-full flex-1 text-md min-h-0" {extensions}/>
+                    <div class="h-0.75 w-full bg-[#25272D]">
+                    </div>
+                    <div class="w-full h-10">
+                    </div>
+                </Pane>
+                <PaneResizer class="w-1 cursor-col-resize" />
+                <Pane class="bg-[#2F323A] rounded flex flex-col">
+                    <div class="text-md w-full h-12 flex flex-row pl-3 items-center justify-between pr-5">
+                        <p>Reponse</p>
+                        <p>18112 bytes | 27ms</p>
+                    </div>
+                    <div class="h-0.75 w-full bg-[#25272D]">
+                    </div>
+                    <CodeMirror bind:value={response_editor_text} class="w-full h-full flex-1 text-md" {extensions}/>
+                    <div class="h-0.75 w-full bg-[#25272D]">
+                    </div>
+                    <div class="w-full h-10">
+                    </div>
+                </Pane>
+            </PaneGroup>
+        </Pane>
+    </PaneGroup>
+</div>
 
 <style>
     select {
@@ -153,5 +249,15 @@
 
     select option {
         background-color: #2F323A;
+    }
+
+    .button_enabled {
+        border: 1px solid oklch(72.3% 0.219 149.579);
+        color: oklch(72.3% 0.219 149.579);
+    }
+
+    .button_disabled {
+        border: 1px solid oklch(63.7% 0.237 25.331);
+        color: oklch(63.7% 0.237 25.331);
     }
 </style>

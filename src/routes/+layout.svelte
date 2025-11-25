@@ -24,10 +24,10 @@
 <main class="w-screen h-screen bg-[#25272D] flex flex-row">
 	{#if side_menu}
 	<div class="w-50 h-full flex flex-col">
-		<div class="w-full h-20 items-center justify-center	flex">
+		<div class="w-full h-[4em] items-center justify-center flex">
 			<h1 class="text-3xl p-4">Snare</h1>
 		</div>
-		<div class="w-full h-full bg-[#2F323A] m-2 rounded flex flex-col gap-4 p-2 justify-between">
+		<div class="w-full h-full bg-[#2F323A] ms-2 mb-2 rounded flex flex-col gap-4 p-2 justify-between">
 				{#each pages as page}
 					<a href="{page.path}" class="w-full pl-4 gap-5 flex">
 						<img src="{page.image}" alt="" class="w-6">
@@ -41,9 +41,9 @@
 	</div>
 	{:else}
 	<div class="w-20 h-full flex flex-col">
-		<div class="w-full h-20">
+		<div class="w-full h-[4em] p-4">
 		</div>
-		<div class="w-20 h-full flex items-start bg-[#2F323A] rounded m-2 p-2 flex-col justify-end">
+		<div class="w-20 h-full flex items-start bg-[#2F323A] rounded mb-2 ms-2 p-2 flex-col justify-end">
 			<div class="gap-4 flex flex-col">
 				{#each pages as page}
 					<a href="{page.path}" class="w-full pl-4 gap-5 flex">
