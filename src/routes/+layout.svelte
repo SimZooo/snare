@@ -4,12 +4,12 @@
 
 	let pages = [
 		{ name: "Intercept", path: "/", image: "./intercept.png" },
-		{ name: "Forward", path: "/settings", image: "./forward.png"  },
-		{ name: "Proxy", path: "/settings", image: "./proxy.png"  },
-		{ name: "Replay", path: "/settings", image: "./proxy.png"  },
-		{ name: "Automate", path: "/settings", image: "./proxy.png"  },
-		{ name: "Tamper", path: "/settings", image: "./proxy.png"  },
-		{ name: "History", path: "/settings", image: "./proxy.png"  }
+		//{ name: "Forward", path: "/settings", image: "./forward.png"  },
+		//{ name: "Proxy", path: "/settings", image: "./proxy.png"  },
+		//{ name: "Replay", path: "/settings", image: "./proxy.png"  },
+		//{ name: "Automate", path: "/settings", image: "./proxy.png"  },
+		//{ name: "Tamper", path: "/settings", image: "./proxy.png"  },
+		//{ name: "History", path: "/settings", image: "./proxy.png"  }
 	];
 
 	let side_menu = $state(true);

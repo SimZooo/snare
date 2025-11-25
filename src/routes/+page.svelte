@@ -2,6 +2,7 @@
     import { listen, emit } from "@tauri-apps/api/event"
     import { invoke } from "@tauri-apps/api/core";
 
+    import { persisted } from 'svelte-persisted-store'
 	import { PaneGroup, Pane, PaneResizer } from "paneforge";
 
     import { EditorView, keymap } from "@codemirror/view";
@@ -10,11 +11,12 @@
     import type { RequestEntry } from "./components/ResizableTable.svelte";
     import { select } from "three/tsl";
 
-    let requests = $state([]);
-    let responses = $state([]);
+    let requests = persisted("requests", []);
+    let responses = persisted("responses", []);
     let pending_responses = $state([]);
     let selected_id = $state(0);
     let selected_entry: RequestEntry = $state();
+    let selected_res = $state();
     let curr_id = $state(0);
     let intercept_state = $state(false);
 
@@ -55,12 +57,13 @@
         let entry = parse_request(event.payload);
         requests_cols.push(entry);
 
-        requests = [...requests, {id: entry.id, packet: payload}];
+        requests.update((reqs) => {reqs.push({id: entry.id, packet: payload}); return reqs});
+        console.log($requests);
         pending_responses = pending_responses.filter((res) => {
             if (res.id === entry.uuid) {
                 entry.status = res.status;
-                entry.state = "Responded";
-                responses = [...responses, res];
+                entry.state = "Complete";
+                $responses = [...$responses, res];
                 return false;
             }
             return true;
@@ -77,7 +80,7 @@
             destination: request.host,
             path: request.path,
             query: "",
-            state: "No response",
+            state: "Waiting",
             length: request.body.length,
             status: status,
             user_agent: request.headers["user-agent"] ?? ""
@@ -87,7 +90,7 @@
     }
 
     listen<HttpResRecv>("response-received", (event) => {
-        let req = requests.find((req) => req.packet.id === event.payload.id);
+        let req = $requests.find((req) => req.packet.id === event.payload.id);
         let req_col = requests_cols.find((req_col) => req_col.id === req.id);
 
         if (!req_col) {
@@ -96,9 +99,9 @@
         }
 
         req_col.status = event.payload.status;
-        req_col.state = "Responded"
+        req_col.state = "Complete"
 
-        responses = [...responses, event.payload];
+        $responses = [...$responses, event.payload];
     });
 
     let response_editor_text = $state("");
@@ -125,9 +128,10 @@
     $effect(() => {
         if (selected_id !== 0) {
             selected_entry = requests_cols.find((req) => req.id === selected_id);
-            let req = requests.find((req) => req.id === selected_id);
+            let req = $requests.find((req) => req.id === selected_id);
             http_editor_text = construct_request_packet(req);
-            let res = responses.find((res) => res.id === req.packet.id);
+            let res = $responses.find((res) => res.id === req.packet.id);
+            selected_res = res;
             response_editor_text = construct_response_packet(res);
         }
     });
@@ -158,17 +162,25 @@
         return text;
     }
 
+    function get_key(obj: object, key: string) {
+        const lower_case_obj = Object.entries(obj).map(([k, value]) => [k.toLowerCase(), value]);
+        let val = lower_case_obj.find(([k, v]) => k == key);
+        return val ? val[1] : undefined;
+    }
+
     function emit_forward(uuid: number) {
         emit("forward-request", uuid);
         console.log("Emitted forwarding ", uuid);
     }
     
     function clear_all() {
-        requests = [];
-        responses = [];
+        requests.update((req) => req = []);
+        responses.update((res) => res = []);
         requests_cols = [];
         response_editor_text = "";
         http_editor_text = "";
+        selected_res = "";
+        selected_entry = {} as RequestEntry;
     }
 </script>
 
@@ -210,9 +222,11 @@
                             <select name="request_display_type" id="" class="">
                                 <option value="original">Original</option>
                             </select>
+                            <!--
                             <button class="bg-[#25272D] p-1 rounded hover:cursor-pointer" onclick={() => {if (selected_entry) { }}}>
                                 Forward →
                             </button>
+                            -->
                         </div>
                     </div>
                     <div class="h-0.75 w-full bg-[#25272D]">
@@ -225,9 +239,9 @@
                 </Pane>
                 <PaneResizer class="w-1 cursor-col-resize" />
                 <Pane class="bg-[#2F323A] rounded flex flex-col">
-                    <div class="text-md w-full h-12 flex flex-row pl-3 items-center justify-between pr-5">
+                    <div class="text-md w-full h-12 flex flex-row pl-3 items-center justify-between pr-5" >
                         <p>Reponse</p>
-                        <p>18112 bytes | 27ms</p>
+                        <p>{selected_res ? (get_key(selected_res.headers, "content-length") ?? "0") : ("0") } bytes</p>
                     </div>
                     <div class="h-0.75 w-full bg-[#25272D]">
                     </div>
