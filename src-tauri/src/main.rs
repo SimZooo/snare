@@ -1,18 +1,19 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::{collections::HashMap, sync::Arc};
-
-use serde::Serialize;
-use tauri::{Emitter, Listener};
-
-use uuid::Uuid;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+use std::{collections::HashMap, process::Stdio, sync::Arc};
+use tauri::{AppHandle, Emitter, State};
+use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
+use tokio::time::sleep;
 
 struct AppState {
-    app_handle: tauri::AppHandle,
-    senders: Arc<tokio::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<String>>>>,
+    intercept: AtomicBool
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct AppRequest {
     method: String,
     uri: String,
@@ -22,7 +23,7 @@ struct AppRequest {
     id: String
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct AppResponse {
     status: u16,
     headers: HashMap<String, String>,
@@ -32,215 +33,95 @@ struct AppResponse {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let state = Arc::new(AppState {
+        intercept: AtomicBool::new(false)
+    });
+    let state_clone = state.clone();
     tauri::Builder::default()
         .setup(|app| {
-            let mut state = Arc::new(AppState {
-                app_handle: app.handle().clone(),
-                senders: Arc::new(tokio::sync::Mutex::new(HashMap::new()))
-            });
-            let senders_clone = state.senders.clone();
-            state.app_handle.listen("forward-request", move |event| {
-                let senders = senders_clone.clone();
-                tauri::async_runtime::spawn(async move {
-                    let uuid = event.payload().split("\"").collect::<Vec<&str>>()[1];
-                    if let Some(tx) = senders.lock().await.remove(uuid) {
-                        let _ = tx.send("".to_string());
-                    }
-                });
-            });
-            tauri::async_runtime::spawn(run_proxy(state));
+            tauri::async_runtime::spawn(run_proxy(Arc::new(app.handle().clone()), state_clone));
             Ok(())
         })
+        .manage(state)
+        .invoke_handler(tauri::generate_handler![toggle_intercept])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-use hyper::{Client, Server, Request, Response, Body, StatusCode, Method};
-use hyper::service::{make_service_fn, service_fn};
-use std::{convert::Infallible, net::SocketAddr};
+async fn run_proxy(app_handle: Arc<AppHandle>, state: Arc<AppState>) {
+    let root = env!("CARGO_MANIFEST_DIR");
+    let script_path = format!("{}\\..\\scripts\\proxy.py", root);
+    println!("{}", script_path);
+    let mut proxy_child = Command::new("mitmdump")
+        .arg("-p").arg("3009")
+        .arg("-s").arg(&script_path)
+        .arg("--set").arg("console_eventlog_verbosity=off")
+        .arg("--set").arg("stream_large_bodies=1")  // Important!
+        .arg("--no-http2")
+        .arg("-q")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn().expect("Failed to start mitmdump");
 
-async fn run_proxy(mut state: Arc<AppState>) {
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    
-    // Clone the Arc for the service factory
-    let state_clone = Arc::clone(&state);
-    
-    let make_svc = make_service_fn(move |_conn| {
-        // Clone the Arc for each service instance
-        let state_service = Arc::clone(&state_clone);
-        async move {
-            Ok::<_, Infallible>(service_fn(move |req| {
-                handle_request(req, Arc::clone(&state_service))
-            }))
+    let dump_out = proxy_child.stdout.take().unwrap();
+    let dump_err = proxy_child.stderr.take().unwrap();
+
+    let mut out_reader = BufReader::new(dump_out).lines();
+    let mut err_reader = BufReader::new(dump_err).lines();
+    let handle_clone = app_handle.clone();
+    let state_clone = state.clone();
+
+    tokio::spawn(async move {
+        loop {
+            while let Ok(Some(line)) = out_reader.next_line().await {
+                if state_clone.intercept.load(Ordering::Relaxed) {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                        if let Some(_) = json.get("method") {
+                            let _ = handle_clone.clone().emit("request-received", json);
+                        } else {
+                            let _ = handle_clone.clone().emit("response-received", json);
+                        }
+                    }
+                } else {
+                    sleep(Duration::from_millis(500)).await;
+                }
+            }
         }
     });
 
-    let server = Server::bind(&addr).serve(make_svc);
-    
-    println!("HTTP/HTTPS Proxy server running on http://localhost:3000");
-    
-    if let Err(e) = server.await {
-        eprintln!("server error: {}", e);
-    }
+    let handle_clone = app_handle.clone();
+    let state_clone = state.clone();
+
+    // Read stderr in its own task
+    tokio::spawn(async move {
+        loop {
+            while let Ok(Some(line)) = err_reader.next_line().await {
+                if state_clone.intercept.load(Ordering::Relaxed) {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+                        if let Some(_) = json.get("method") {
+                            let _ = handle_clone.clone().emit("request-received", json);
+                        } else {
+                            let _ = handle_clone.clone().emit("response-received", json);
+                        }
+                    }
+                } else {
+                    sleep(Duration::from_millis(500)).await;
+                }
+            }
+        }
+    });
+
+    println!("Proxy running...");
+
+    // IMPORTANT: Wait for process so it doesn’t get dropped
+    let status = proxy_child.wait().await.unwrap();
+    println!("[mitmdump exited] {status}");
 }
 
-async fn handle_request(
-    req: Request<Body>, 
-    state: Arc<AppState>
-) -> Result<Response<Body>, Infallible> {
-    // Store the original method and body before consuming the request
-    let original_method = req.method().clone();
-    let original_uri = req.uri().to_string();
-    
-    // Convert headers to HashMap before consuming the request
-    let mut headers = HashMap::new();
-    for (key, value) in req.headers() {
-        headers.insert(
-            key.as_str().to_string(),
-            value.to_str().unwrap_or("").to_string()
-        );
-    }
-    
-    // Extract body
-    let (parts, body) = req.into_parts();
-    let body_bytes = hyper::body::to_bytes(body).await.unwrap_or_default();
-    let body_str = String::from_utf8_lossy(&body_bytes).to_string();
-    
-    // Build raw HTTP packet for the request and create the AppRequest to emit
-    let request_target = parts
-        .uri
-        .path_and_query()
-        .map(|p| p.as_str().to_string())
-        .unwrap_or(original_uri.clone());
-
-    let mut raw_request = format!("{} {} HTTP/1.1\r\n", original_method, request_target);
-    for (k, v) in &headers {
-        raw_request.push_str(&format!("{}: {}\r\n", k, v));
-    }
-    raw_request.push_str("\r\n");
-    raw_request.push_str(&body_str);
-
-    let uuid = Uuid::new_v4().to_string();
-    let app_request = AppRequest {
-        method: original_method.to_string(),
-        uri: original_uri.clone(),
-        headers,
-        body: body_str.clone(),
-        raw: raw_request,
-        id: uuid.clone(),
-    };
-
-    if let Err(e) = state.app_handle.emit("request-intercepted", &app_request) {
-        eprintln!("Failed to emit request event: {}", e);
-    } else {
-        println!("Emitted event")
-    }
-
-    let (tx, mut rx) = tokio::sync::oneshot::channel::<String>();
-    state.senders.lock().await.insert(uuid.clone(), tx);
-    match rx.await {
-        Ok(id) => {
-            println!("Continuing {}", id);
-            let _ = state.app_handle.emit("request-sent", id.clone());
-        },
-        Err(e) => { eprintln!("Receiver error: {e}"); }
-    }
-    
-    // Handle CONNECT method for HTTPS
-    if original_method == Method::CONNECT {
-        return Ok(Response::new(Body::from("HTTP proxy does not support HTTPS tunneling")));
-    }
-    
-    // Rebuild the request for forwarding using the original method
-    let client = Client::new();
-    let mut new_req = Request::builder()
-        .method(original_method) // Use the original Method, not String
-        .uri(&app_request.uri);
-    
-    // Copy headers (excluding host)
-    for (key, value) in &app_request.headers {
-        if key.to_lowercase() != "host" {
-            new_req = new_req.header(key, value);
-        }
-    }
-    
-    let new_req = new_req.body(Body::from(body_bytes)).unwrap();
-    
-    match client.request(new_req).await {
-        Ok(response) => {
-            let status = response.status();
-            let response_headers = response.headers().clone();
-            let body_bytes = hyper::body::to_bytes(response.into_body()).await.unwrap_or_default();
-            let body_str = String::from_utf8_lossy(&body_bytes).to_string();
-            
-            // Convert response headers to HashMap
-            let mut headers_map = HashMap::new();
-            for (key, value) in &response_headers {
-                headers_map.insert(
-                    key.as_str().to_string(),
-                    value.to_str().unwrap_or("").to_string()
-                );
-            }
-
-            // Create response object for frontend
-            // Build raw HTTP packet for the response
-            let reason = status.canonical_reason().unwrap_or("");
-            let mut raw_response = format!("HTTP/1.1 {} {}\r\n", status.as_u16(), reason);
-            for (key, value) in &response_headers {
-                raw_response.push_str(&format!("{}: {}\r\n", key.as_str(), value.to_str().unwrap_or("")));
-            }
-            raw_response.push_str("\r\n");
-            raw_response.push_str(&body_str);
-
-            let app_response = AppResponse {
-                status: status.as_u16(),
-                headers: headers_map,
-                body: body_str.clone(),
-                raw: raw_response,
-            };
-            
-            // Emit event to frontend with the intercepted response
-            if let Err(e) = state.app_handle.emit("response-intercepted", &app_response) {
-                eprintln!("Failed to emit response event: {}", e);
-            }
-            
-            println!("=== INTERCEPTED RESPONSE ===");
-            println!("Status: {}", status);
-            
-            // Rebuild response for the client
-            let mut response_builder = Response::builder().status(status);
-            for (key, value) in &response_headers {
-                response_builder = response_builder.header(key, value);
-            }
-            
-            Ok(response_builder.body(Body::from(body_bytes)).unwrap())
-        }
-        Err(e) => {
-            eprintln!("Proxy error: {}", e);
-            
-            // Emit error event to frontend
-            let err_body = format!("Proxy error: {}", e);
-            let mut raw_err = format!("HTTP/1.1 500 Internal Server Error\r\n");
-            raw_err.push_str("\r\n");
-            raw_err.push_str(&err_body);
-
-            let error_response = AppResponse {
-                status: 500,
-                headers: HashMap::new(),
-                body: err_body.clone(),
-                raw: raw_err,
-            };
-
-            if let Err(emit_err) = state.app_handle.emit("response-intercepted", &error_response) {
-                eprintln!("Failed to emit error event: {}", emit_err);
-            }
-
-            Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from("Proxy error"))
-                .unwrap())
-        }
-    }
+#[tauri::command]
+fn toggle_intercept(state: State<'_, Arc<AppState>>, intercept_toggle: bool) {
+    state.intercept.store(intercept_toggle, Ordering::Relaxed);
+    println!("Intercept toggled: {}", intercept_toggle);
 }
 
 fn main() {

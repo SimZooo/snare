@@ -12,7 +12,7 @@
         path: string,
         query: string,
         state: string,
-        length: string,
+        length: number,
         status: string,
         user_agent: string,
     };
@@ -23,7 +23,7 @@
     let row_sizes = $state({});
 </script>
 
-<div class="w-full grid grid-rows-[3.75rem_auto_1fr]">
+<div class="w-full grid grid-rows-[3.75rem_auto_1fr] overflow-auto min-h-0">
     <PaneGroup class="h-15 items-center justify-center" direction="horizontal" onLayoutChange={(e) => {
         e.forEach((size, i) => row_sizes[i] = size);
     }}>
@@ -41,20 +41,20 @@
     </div>
 
     <div class="overflow-auto min-h-0">
-        <PaneGroup direction="vertical" class="w-full bg-[#2F323A]">
+        <PaneGroup direction="vertical" class="w-full h-full bg-[#2F323A]">
         {#each cols as entry, row_i}
             <PaneGroup
             direction="horizontal"
-            class="hover:bg-[#25272D]"
+            class="hover:bg-[#25272D] h-8"
             >
             {#each rows as row, col_i}
                 <Pane
                 maxSize={row_sizes[col_i]}
                 minSize={row_sizes[col_i]}
-                class="pl-4 bg-[#{selected === entry.id ? "25272D" : ""}]"
+                class="pl-4 bg-[#{selected === entry.id ? "25272D" : ""}] h-8"
                 onclick={() => {if (selected === entry.id) { selected = 0 } else {selected = entry.id }}}
                 >
-                <p>{entry[row.name.toLowerCase()]}</p>
+                <p class="text-nowrap">{entry[row.name.toLowerCase()]}</p>
                 </Pane>
             {/each}
             </PaneGroup>
