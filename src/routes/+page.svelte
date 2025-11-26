@@ -10,6 +10,8 @@
     import ResizableTable from "./components/ResizableTable.svelte";
     import type { RequestEntry } from "./components/ResizableTable.svelte";
     import { select } from "three/tsl";
+    import { onMount } from "svelte";
+    import { goto } from "$app/navigation";
 
     let requests = persisted("requests", []);
     let responses = persisted("responses", []);
@@ -19,6 +21,20 @@
     let selected_res = $state();
     let curr_id = $state(0);
     let intercept_state = $state(false);
+    let forward_requests = persisted("forwarded_requests", []);
+
+    onMount(() => {
+        $requests.forEach((req) => {
+            let entry = parse_request(req.packet);
+            req.id = entry.id;
+            let res = $responses.find((res) => res.id == req.packet.id)
+            if (res) {
+                entry.status = res.status;
+                entry.state = "Complete"
+            }
+            requests_cols.push(entry);
+        })
+    });
 
     type HttpReqRecv = {
         method: string
@@ -59,6 +75,7 @@
 
         requests.update((reqs) => {reqs.push({id: entry.id, packet: payload}); return reqs});
         console.log($requests);
+
         pending_responses = pending_responses.filter((res) => {
             if (res.id === entry.uuid) {
                 entry.status = res.status;
@@ -167,11 +184,6 @@
         let val = lower_case_obj.find(([k, v]) => k == key);
         return val ? val[1] : undefined;
     }
-
-    function emit_forward(uuid: number) {
-        emit("forward-request", uuid);
-        console.log("Emitted forwarding ", uuid);
-    }
     
     function clear_all() {
         requests.update((req) => req = []);
@@ -181,6 +193,13 @@
         http_editor_text = "";
         selected_res = "";
         selected_entry = {} as RequestEntry;
+    }
+
+    function send_to_forward() {
+        if (!selected_entry) return;
+
+        forward_requests.update((forw) => [...forw, {entry: selected_entry, raw: http_editor_text}]);
+        goto("/forward");
     }
 </script>
 
@@ -222,11 +241,9 @@
                             <select name="request_display_type" id="" class="">
                                 <option value="original">Original</option>
                             </select>
-                            <!--
-                            <button class="bg-[#25272D] p-1 rounded hover:cursor-pointer" onclick={() => {if (selected_entry) { }}}>
-                                Forward →
+                            <button class="bg-[#25272D] p-1 rounded hover:cursor-pointer" onclick={() => send_to_forward()}>
+                                Send to Forward
                             </button>
-                            -->
                         </div>
                     </div>
                     <div class="h-0.75 w-full bg-[#25272D]">
