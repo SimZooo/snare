@@ -20,6 +20,7 @@
 		"vite": "^7.1.10"
 	},
 	"dependencies": {
+		"@codemirror/lang-json": "^6.0.2",
 		"@codemirror/language": "^6.11.3",
 		"@codemirror/stream-parser": "^0.19.9",
 		"@codemirror/theme-one-dark": "^6.1.3",

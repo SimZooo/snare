@@ -1,24 +1,13 @@
 <script lang="ts">
+    import type { Request } from "$lib/network";
+
     type Row = {
         name: string,
         default_size: number,
     };
 
-    export type RequestEntry = {
-        id: number,
-        uuid: string,
-        method: string,
-        destination: string,
-        path: string,
-        query: string,
-        state: string,
-        length: number,
-        status: string,
-        user_agent: string,
-    };
-
     import { Pane, PaneGroup, PaneResizer } from "paneforge";
-    let { rows, cols, selected = $bindable() }: { rows: Row[], cols: RequestEntry[], selected: number } = $props();
+    let { rows, cols, selected = $bindable() }: { rows: Row[], cols: Request[], selected: Request } = $props();
 
     let row_sizes = $state({});
 </script>
@@ -51,10 +40,10 @@
                 <Pane
                 maxSize={row_sizes[col_i]}
                 minSize={row_sizes[col_i]}
-                class="pl-4 bg-[#{selected === entry.id ? "25272D" : ""}] h-8"
-                onclick={() => {if (selected === entry.id) { selected = 0 } else {selected = entry.id }}}
+                class="pl-4 bg-[#{selected ? (selected.id === entry.id ? "25272D" : "") : ""}] h-8"
+                onclick={() => {selected = entry}}
                 >
-                <p class="text-nowrap">{entry[row.name.toLowerCase()]}</p>
+                <p class="text-nowrap">{entry ? entry[row.name.toLowerCase()] : ""}</p>
                 </Pane>
             {/each}
             </PaneGroup>

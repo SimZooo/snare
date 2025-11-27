@@ -4,9 +4,8 @@
 
 	let pages = [
 		{ name: "Intercept", path: "/", image: "./intercept.png" },
-		{ name: "Forward", path: "/forward", image: "./forward.png" },
-		//{ name: "Proxy", path: "/settings", image: "./proxy.png"  },
-		//{ name: "Replay", path: "/settings", image: "./proxy.png"  },
+		{ name: "Repeater", path: "/repeater", image: "./forward.png" },
+		{ name: "Tokenizer", path: "/tokenizer", image: "./proxy.png"  },
 		//{ name: "Automate", path: "/settings", image: "./proxy.png"  },
 		//{ name: "Tamper", path: "/settings", image: "./proxy.png"  },
 		//{ name: "History", path: "/settings", image: "./proxy.png"  }
