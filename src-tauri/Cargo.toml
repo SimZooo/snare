@@ -26,3 +26,5 @@ tauri-plugin-log = "2.0.0-rc"
 tokio = { version = "1.0", features = ["full"] }
 uuid = { version = "1.18.1", features = ["v4"] }
 reqwest = "0.12.24"
+base64 = "0.22.1"
+jsonwebtoken = "9.3.1"
