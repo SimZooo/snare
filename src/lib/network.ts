@@ -32,7 +32,7 @@ export type HttpResRecv = {
 };
 
 export type Request = {
-    id: number,
+    id: string,
     uuid: string,
     headers: object,
     path: string,
@@ -47,15 +47,15 @@ export type Request = {
 
 export type Response = {
     uuid: string,
-    id: number,
+    id: string,
     headers: object,
     body: string,
     status: string
 }
 
-export function parse_request_from_payload(payload: HttpReqRecv, id: number): Request {
+export function parse_request_from_payload(payload: HttpReqRecv): Request {
     return {
-        id,
+        id: payload.id,
         uuid: payload.id,
         headers: payload.headers ?? {},
         path: payload.path ?? "",
@@ -72,14 +72,11 @@ export function parse_request_from_payload(payload: HttpReqRecv, id: number): Re
 export function parse_response_from_payload(payload: HttpResRecv): Response {
     return {
         uuid: payload.id,
-        id: 0,
+        id: payload.id,
         headers: payload.headers ?? {},
         body: payload.body ?? "",
         status: payload.status ?? ""
     };
-}
-
-export function parse_raw_request(raw_request: string) {
 }
 
 export function forward_request(current_request, text) {

@@ -11,19 +11,21 @@
     import { onMount } from "svelte";
     import { goto } from "$app/navigation";
     import { construct_request_packet, construct_response_packet, parse_request_from_payload, parse_response_from_payload, type HttpReqRecv, type HttpResRecv, type Request, type Response } from "$lib/network";
+    import { filter_query } from "$lib/search";
 
     let requests: Persisted<Request[]> = persisted("requests", []);
     let responses: Persisted<Response[]> = persisted("responses", []);
     let pending_responses: Response[] = $state([]);
+    let search = $state("");
 
     let selected_entry: Request = $state();
     let selected_res: Response = $state();
 
-    let curr_id = $state(0);
     let intercept_state = $state(false);
 
     let forward_requests = persisted("forwarded_requests", []);
     let forward_responses = persisted("forward_responses", []);
+    let filtered_requests = $state($requests);
 
     onMount(() => {
         requests.update((reqs) =>
@@ -49,9 +51,8 @@
     
     listen<HttpReqRecv>("request-received", (event) => {
         let payload = event.payload;
-        curr_id += 1;
 
-        let request = parse_request_from_payload(payload, curr_id);
+        let request = parse_request_from_payload(payload);
         pending_responses = pending_responses.filter((res) => {
             if (res.uuid === request.uuid) {
                 request.status = res.status;
@@ -62,13 +63,18 @@
             return true;
         });
 
-        requests.update((reqs) => [...reqs, request]);
+        requests.update((reqs) =>
+            //if (reqs.some(r => r.uuid === request.uuid)) return reqs; 
+            [...reqs, request]
+        );
+        if (search === "") {
+            filter();
+        }
     });
 
     listen<HttpResRecv>("response-received", (event) => {
         let res = parse_response_from_payload(event.payload);
         let req = $requests.find((req) => req.uuid === event.payload.id);
-        console.log(req, event.payload.id);
 
         if (!req) {
             pending_responses = [...pending_responses, res];
@@ -85,11 +91,13 @@
                 status: res.status,
                 state: "Complete"
             }
-            console.log(new_reqs);
             return new_reqs;
         });
 
         responses.update((r) => [...r, res]);
+        if (search === "") {
+            filter();
+        }
     });
 
     let response_editor_text = $state("");
@@ -139,6 +147,7 @@
         selected_entry = undefined;
         forward_requests.update((_) => []);
         forward_responses.update((_) => []);
+        filtered_requests = [];
     }
 
     function send_to_forward() {
@@ -147,15 +156,19 @@
         forward_requests.update((forw) => [...forw, {entry: selected_entry, raw: http_editor_text}]);
         goto("/forward");
     }
+
+    function filter() {
+        filtered_requests = filter_query(search, {req: $requests}).req
+    }
 </script>
 
 <div class="w-full h-full grid grid-rows-[4em_auto] pb-2 pr-2">
     <div class="pl-6 w-full h-full items-center align-middle flex justify-between">
         <div class="flex gap-2 items-center">
             <div class="flex flex-col border rounded p-0.5 text-gray-500 border-gray-500 w-fit h-fit">
-                <input type="text" placeholder="Search requests" class="">
+                <input type="text" placeholder="E.g: req.method:GET;" class="" bind:value={search}>
             </div>
-            <button class="border-2 rounded text-gray-500 p-0.5 w-20">
+            <button class="border-2 rounded text-gray-500 p-0.5 w-20" onclick={() => filter()}>
                 Search
             </button>
         </div>
@@ -172,7 +185,7 @@
     <PaneGroup direction="vertical" class="w-full h-full pl-4">
         <Pane defaultSize={40} class="bg-[#2F323A] rounded flex flex-col">
             <div class="h-full w-full overflow-auto">
-                <ResizableTable rows={requests_rows} cols={$requests} bind:selected={selected_entry}/>
+                <ResizableTable rows={requests_rows} cols={filtered_requests} bind:selected={selected_entry}/>
             </div>
             <div class="w-full h-0.5 bg-[#25272D]">
             </div>
@@ -188,7 +201,7 @@
                                 <option value="original">Original</option>
                             </select>
                             <button class="bg-[#25272D] p-1 rounded hover:cursor-pointer" onclick={() => send_to_forward()}>
-                                Send to Forward
+                                Send to Repeater
                             </button>
                         </div>
                     </div>
