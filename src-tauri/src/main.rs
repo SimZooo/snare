@@ -1,22 +1,24 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use jsonwebtoken::crypto::sign;
+use jsonwebtoken::*;
+use reqwest::{Client, StatusCode};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use tokio::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::{collections::HashMap, process::Stdio, sync::Arc};
-use jsonwebtoken::crypto::sign;
-use reqwest::Client;
-use serde_json::{Value, json};
 use tauri::http::{HeaderMap, HeaderName, HeaderValue};
 use tauri::{AppHandle, Emitter, State};
-use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::sync::Semaphore;
 use tokio::time::sleep;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use jsonwebtoken::*;
 
 struct AppState {
-    intercept: AtomicBool
+    intercept: AtomicBool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -26,7 +28,7 @@ struct AppRequest {
     headers: HashMap<String, String>,
     body: String,
     raw: String,
-    id: String
+    id: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -37,27 +39,34 @@ struct AppResponse {
     raw: String,
 }
 
-#[derive(Serialize, Default, Debug)] 
-struct Res { 
-    url: String, 
-    status: String, 
-    headers: HashMap<String, String>, 
-    body: String, 
+#[derive(Serialize, Default, Debug)]
+struct Res {
+    url: String,
+    status: String,
+    headers: HashMap<String, String>,
+    body: String,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let state = Arc::new(AppState {
-        intercept: AtomicBool::new(false)
+        intercept: AtomicBool::new(false),
     });
     let state_clone = state.clone();
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             tauri::async_runtime::spawn(run_proxy(Arc::new(app.handle().clone()), state_clone));
             Ok(())
         })
         .manage(state)
-        .invoke_handler(tauri::generate_handler![toggle_intercept, send_request, parse_jwt_token, encode_jwt])
+        .invoke_handler(tauri::generate_handler![
+            toggle_intercept,
+            send_request,
+            parse_jwt_token,
+            encode_jwt,
+            probe_dirs
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
@@ -67,15 +76,20 @@ async fn run_proxy(app_handle: Arc<AppHandle>, state: Arc<AppState>) {
     let script_path = format!("{}\\..\\scripts\\proxy.py", root);
     println!("{}", script_path);
     let mut proxy_child = Command::new("mitmdump")
-        .arg("-p").arg("3009")
-        .arg("-s").arg(&script_path)
-        .arg("--set").arg("console_eventlog_verbosity=off")
-        .arg("--set").arg("stream_large_bodies=1") 
+        .arg("-p")
+        .arg("3009")
+        .arg("-s")
+        .arg(&script_path)
+        .arg("--set")
+        .arg("console_eventlog_verbosity=off")
+        .arg("--set")
+        .arg("stream_large_bodies=1")
         .arg("--no-http2")
         .arg("-q")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn().expect("Failed to start mitmdump");
+        .spawn()
+        .expect("Failed to start mitmdump");
 
     let dump_out = proxy_child.stdout.take().unwrap();
     let dump_err = proxy_child.stderr.take().unwrap();
@@ -135,7 +149,6 @@ async fn run_proxy(app_handle: Arc<AppHandle>, state: Arc<AppState>) {
 #[tauri::command]
 async fn send_request(app: AppHandle, raw: String) {
     let client = Client::new();
-
     let raw_owned = raw.clone();
 
     if let Some((headers_str, body)) = raw_owned.split_once("\r\n\r\n") {
@@ -148,13 +161,14 @@ async fn send_request(app: AppHandle, raw: String) {
             .collect();
 
         let request_line = headers_str.lines().next().unwrap();
-        let (method, path, _version) = match request_line.split_whitespace().collect::<Vec<&str>>()[..] {
-            [m, p, v] => (m, p, v),
-            _ => {
-                eprintln!("Invalid request line: {}", request_line);
-                return;
-            }
-        };
+        let (method, path, _version) =
+            match request_line.split_whitespace().collect::<Vec<&str>>()[..] {
+                [m, p, v] => (m, p, v),
+                _ => {
+                    eprintln!("Invalid request line: {}", request_line);
+                    return;
+                }
+            };
 
         let mut host = None;
         for header in headers_split {
@@ -174,12 +188,10 @@ async fn send_request(app: AppHandle, raw: String) {
         let url = match host {
             Some(host) => {
                 format!("https://{host}{path}")
-            },
-            None => {
-                path.to_string()
             }
+            None => path.to_string(),
         };
-        
+
         println!("Sending to {:?} {}", method, url);
 
         let mut req = match method {
@@ -200,16 +212,16 @@ async fn send_request(app: AppHandle, raw: String) {
             let mut response = Res::default();
             response.url = res.url().to_string();
             response.status = res.status().to_string();
-            response.headers = res.headers()
-                    .iter()
-                    .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
-                    .collect();
+            response.headers = res
+                .headers()
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+                .collect();
 
             let body_bytes = res.bytes().await.unwrap();
             let body_string = String::from_utf8_lossy(&body_bytes).to_string();
 
             response.body = body_string;
-
 
             let _ = app.emit("forwarded-response-received", json!(response));
         }
@@ -225,15 +237,12 @@ fn toggle_intercept(state: State<'_, Arc<AppState>>, intercept_toggle: bool) {
 #[derive(Default, Serialize, Deserialize)]
 struct JwtNote {
     importance: String, // error, warning, info
-    note: String
+    note: String,
 }
 
 impl JwtNote {
     pub fn new(importance: String, note: String) -> Self {
-        JwtNote {
-            importance,
-            note
-        }
+        JwtNote { importance, note }
     }
 }
 
@@ -242,7 +251,7 @@ struct JwtParseResult {
     header: Option<String>,
     payload: Option<String>,
     signature: Option<String>,
-    notes: Vec<JwtNote>
+    notes: Vec<JwtNote>,
 }
 
 const REQUIRED_CLAIMS: [&'static str; 3] = ["exp", "nbf", "aud"];
@@ -252,31 +261,48 @@ fn parse_jwt_token(raw_token: String, secret: String) -> JwtParseResult {
     let parts = raw_token.split(".").collect::<Vec<&str>>();
     let mut results = JwtParseResult::default();
     if parts.len() != 3 {
-        results.notes.push(
-            JwtNote::new("error".to_string(), "Invalid JWT Token: must have 3 parts".to_string())
-        );
+        results.notes.push(JwtNote::new(
+            "error".to_string(),
+            "Invalid JWT Token: must have 3 parts".to_string(),
+        ));
     }
 
-    let header = URL_SAFE_NO_PAD.decode(parts[0].as_bytes()).unwrap_or_else(|_| {
-        results.notes.push(JwtNote::new("error".to_string(), "Invalid token: Invalid base64 header".to_string()));
-        "{}".as_bytes().to_vec()
-    });
-    
-    let payload = URL_SAFE_NO_PAD.decode(parts[1].as_bytes()).unwrap_or_else(|_| {
-        results.notes.push(JwtNote::new("error".to_string(), "Invalid token: Invalid base64 payload".to_string()));
-        "{}".as_bytes().to_vec()
-    });
+    let header = URL_SAFE_NO_PAD
+        .decode(parts[0].as_bytes())
+        .unwrap_or_else(|_| {
+            results.notes.push(JwtNote::new(
+                "error".to_string(),
+                "Invalid token: Invalid base64 header".to_string(),
+            ));
+            "{}".as_bytes().to_vec()
+        });
+
+    let payload = URL_SAFE_NO_PAD
+        .decode(parts[1].as_bytes())
+        .unwrap_or_else(|_| {
+            results.notes.push(JwtNote::new(
+                "error".to_string(),
+                "Invalid token: Invalid base64 payload".to_string(),
+            ));
+            "{}".as_bytes().to_vec()
+        });
 
     let header = String::from_utf8_lossy(&header[..]).to_string();
     let payload = String::from_utf8_lossy(&payload[..]).to_string();
 
     let header_json = serde_json::from_str(&header).unwrap_or_else(|_| {
-        results.notes.push(JwtNote::new("warning".to_string(), "Invalid header JSON".to_string()));
+        results.notes.push(JwtNote::new(
+            "warning".to_string(),
+            "Invalid header JSON".to_string(),
+        ));
         Value::default()
     });
 
     let payload_json = serde_json::from_str(&payload).unwrap_or_else(|_| {
-        results.notes.push(JwtNote::new("warning".to_string(), "Invalid payload JSON".to_string()));
+        results.notes.push(JwtNote::new(
+            "warning".to_string(),
+            "Invalid payload JSON".to_string(),
+        ));
         Value::default()
     });
 
@@ -287,14 +313,20 @@ fn parse_jwt_token(raw_token: String, secret: String) -> JwtParseResult {
 
     for claim in REQUIRED_CLAIMS {
         if payload_json.get(claim).is_none() {
-            results.notes.push(JwtNote::new("warning".to_string(), format!("Claim {} not found in JWT", claim).to_string()));
+            results.notes.push(JwtNote::new(
+                "warning".to_string(),
+                format!("Claim {} not found in JWT", claim).to_string(),
+            ));
         }
     }
 
     if let Some(alg) = header_json.get("alg") {
         if let Some(alg) = alg.as_str() {
             let algorithm: Algorithm = alg.parse().unwrap_or_else(|_| {
-                results.notes.push(JwtNote::new("error".to_string(), "Invalid algorithm".to_string()));
+                results.notes.push(JwtNote::new(
+                    "error".to_string(),
+                    "Invalid algorithm".to_string(),
+                ));
                 Algorithm::default()
             });
 
@@ -304,20 +336,36 @@ fn parse_jwt_token(raw_token: String, secret: String) -> JwtParseResult {
             validation.validate_nbf = false;
             validation.required_spec_claims.clear();
 
-            match decode::<serde_json::Value>(&raw_token, &DecodingKey::from_secret(secret.as_bytes()), &validation) {
+            match decode::<serde_json::Value>(
+                &raw_token,
+                &DecodingKey::from_secret(secret.as_bytes()),
+                &validation,
+            ) {
                 Ok(_token_data) => {
-                    results.notes.push(JwtNote::new("info".to_string(), "Valid signature".to_string()));
-                },
+                    results.notes.push(JwtNote::new(
+                        "info".to_string(),
+                        "Valid signature".to_string(),
+                    ));
+                }
                 Err(err) => {
                     println!("{err}");
-                    results.notes.push(JwtNote::new("error".to_string(), "Invalid signature".to_string()));
+                    results.notes.push(JwtNote::new(
+                        "error".to_string(),
+                        "Invalid signature".to_string(),
+                    ));
                 }
             }
         } else {
-            results.notes.push(JwtNote::new("error".to_string(), "Algorithm claim is not a string".to_string()));
+            results.notes.push(JwtNote::new(
+                "error".to_string(),
+                "Algorithm claim is not a string".to_string(),
+            ));
         }
     } else {
-        results.notes.push(JwtNote::new("error".to_string(), "Token does not have an algorithm".to_string()));
+        results.notes.push(JwtNote::new(
+            "error".to_string(),
+            "Token does not have an algorithm".to_string(),
+        ));
     }
 
     return results;
@@ -328,28 +376,30 @@ struct JwtEncodeResult {
     header: String,
     payload: String,
     signature: String,
-    notes: Vec<JwtNote>
+    notes: Vec<JwtNote>,
 }
 
 #[tauri::command]
 fn encode_jwt(header: String, payload: String, secret: String) -> JwtEncodeResult {
     let mut result = JwtEncodeResult::default();
-    let payload_json = match serde_json::from_str::<Value>(&payload) {
-        Ok(vals) => {
-            vals
-        },
+    let _ = match serde_json::from_str::<Value>(&payload) {
+        Ok(vals) => vals,
         Err(e) => {
-            result.notes.push(JwtNote::new("error".to_string(), "Invalid payload JSON".to_string()));
+            result.notes.push(JwtNote::new(
+                "error".to_string(),
+                "Invalid payload JSON".to_string(),
+            ));
             return result;
         }
     };
 
     let header_json = match serde_json::from_str::<Value>(&header) {
-        Ok(vals) => {
-            vals
-        },
+        Ok(vals) => vals,
         Err(e) => {
-            result.notes.push(JwtNote::new("error".to_string(), "Invalid payload JSON".to_string()));
+            result.notes.push(JwtNote::new(
+                "error".to_string(),
+                "Invalid payload JSON".to_string(),
+            ));
             return result;
         }
     };
@@ -364,18 +414,88 @@ fn encode_jwt(header: String, payload: String, secret: String) -> JwtEncodeResul
             result.signature = match sign(&message.as_bytes(), &key, algorithm) {
                 Ok(val) => val,
                 Err(_) => {
-                    result.notes.push(JwtNote::new("error".to_string(), "Failed to create signature".to_string()));
+                    result.notes.push(JwtNote::new(
+                        "error".to_string(),
+                        "Failed to create signature".to_string(),
+                    ));
                     return result;
                 }
             };
         }
-
     }
 
     result.header = header_encoded;
     result.payload = payload_encoded;
 
     return result;
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+struct Dir {
+    url: String,
+    status: String,
+}
+
+
+#[tauri::command]
+async fn probe_dirs(host: String, wordlist: String, is_file: bool, state: AppHandle) {
+    let accepted_codes = Arc::new(vec![StatusCode::OK, StatusCode::CREATED, StatusCode::ACCEPTED, StatusCode::MOVED_PERMANENTLY, StatusCode::FORBIDDEN]);
+
+    let file = File::open(wordlist).await.unwrap();
+    let reader = BufReader::new(file);
+    let mut lines = reader.lines();
+
+    let client = Client::new();
+    let semaphore = Arc::new(Semaphore::new(200));
+    let mut handles = vec![];
+    let mut host = host;
+    if host.ends_with("/") {
+        host.pop();
+    }
+
+    println!("Starting directory probing");
+
+    loop {
+        let dir = match lines.next_line().await {
+            Ok(Some(line)) => line,
+            Ok(None) => break,
+            Err(_) => continue,
+        };
+
+        let permit = semaphore.clone().acquire_owned().await.unwrap();
+
+        let state = state.clone();
+        let client = client.clone();
+        let host = host.clone();
+        let dir = dir.to_string();
+        let accepted_clone = accepted_codes.clone();
+
+        let handle = tokio::spawn(async move {
+            let url = format!("{}/{}", host, dir);
+
+            if let Ok(resp) = client.get(&url).send().await {
+                if !accepted_clone.contains(&resp.status()) {
+                    return;
+                }
+
+                let _ = state.emit(
+                    "dir-received",
+                    Dir {
+                        url,
+                        status: resp.status().as_str().to_string(),
+                    },
+                );
+            }
+
+            drop(permit);
+        });
+        handles.push(handle);
+    }
+
+    for h in handles {
+        let _ = h.await;
+    }
+    let _ = state.emit("dir-scanning-finished", {});
 }
 
 fn main() {
