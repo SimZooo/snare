@@ -24,15 +24,16 @@
 	{#if side_menu}
 	<div class="w-50 h-full flex flex-col">
 		<div class="w-full h-[4em] items-center justify-center flex">
-			<h1 class="text-3xl p-4">Snare</h1>
 		</div>
-		<div class="w-full h-full bg-[#2F323A] ms-2 mb-2 rounded flex flex-col gap-4 p-2 justify-between">
-				{#each pages as page}
-					<a href="{page.path}" class="w-full pl-4 gap-5 flex">
-						<img src="{page.image}" alt="" class="w-6">
-						<p>{page.name}</p>
-					</a>
-				{/each}
+		<div class="w-full h-full bg-[#2F323A] ms-2 mb-2 rounded flex flex-col justify-between mt-1">
+			{#each pages as page}
+				<a href="{page.path}" class="w-full h-fit gap-5 flex justify-center p-3 align-middle items-center">
+					<!--<img src="{page.image}" alt="" class="w-6">-->
+					<p>{page.name}</p>
+				</a>
+				<div class="h-0.75 w-full bg-[#25272D]">
+				</div>
+			{/each}
 			<div class="w-full h-full flex items-end justify-center pb-4">
 				<button class="text-center hover:cursor-pointer" onclick={() => side_menu = false}>&lt; Collapse</button>
 			</div>
