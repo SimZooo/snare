@@ -6,12 +6,12 @@ use jsonwebtoken::*;
 use reqwest::{Client, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::fs::File;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 use std::{collections::HashMap, process::Stdio, sync::Arc};
 use tauri::http::{HeaderMap, HeaderName, HeaderValue};
 use tauri::{AppHandle, Emitter, State};
+use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Semaphore;
@@ -54,6 +54,7 @@ pub fn run() {
     });
     let state_clone = state.clone();
     tauri::Builder::default()
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             tauri::async_runtime::spawn(run_proxy(Arc::new(app.handle().clone()), state_clone));
@@ -436,19 +437,28 @@ struct Dir {
     status: String,
 }
 
-
 #[tauri::command]
-async fn probe_dirs(host: String, wordlist: String, is_file: bool, state: AppHandle) {
-    let accepted_codes = Arc::new(vec![StatusCode::OK, StatusCode::CREATED, StatusCode::ACCEPTED, StatusCode::MOVED_PERMANENTLY, StatusCode::FORBIDDEN]);
+async fn probe_dirs(host: String, wordlist: String, rate_limit: usize, state: AppHandle) {
+    let accepted_codes = Arc::new(vec![
+        StatusCode::OK,
+        StatusCode::CREATED,
+        StatusCode::ACCEPTED,
+        StatusCode::MOVED_PERMANENTLY,
+        StatusCode::FORBIDDEN,
+    ]);
 
     let file = File::open(wordlist).await.unwrap();
     let reader = BufReader::new(file);
     let mut lines = reader.lines();
 
+    let mut interval = tokio::time::interval(Duration::from_millis(
+        (1000.0 / rate_limit as f64) as u64
+    ));
     let client = Client::new();
     let semaphore = Arc::new(Semaphore::new(200));
     let mut handles = vec![];
     let mut host = host;
+
     if host.ends_with("/") {
         host.pop();
     }
@@ -456,38 +466,43 @@ async fn probe_dirs(host: String, wordlist: String, is_file: bool, state: AppHan
     println!("Starting directory probing");
 
     loop {
+        if rate_limit != 0 {
+            interval.tick().await;
+        }
         let dir = match lines.next_line().await {
-            Ok(Some(line)) => line,
+            Ok(Some(line)) => {
+                let trimmed = line.trim().to_string();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                trimmed
+            },
             Ok(None) => break,
             Err(_) => continue,
         };
-
-        let permit = semaphore.clone().acquire_owned().await.unwrap();
 
         let state = state.clone();
         let client = client.clone();
         let host = host.clone();
         let dir = dir.to_string();
         let accepted_clone = accepted_codes.clone();
+        let semaphore = semaphore.clone();
 
         let handle = tokio::spawn(async move {
+            let _permit = semaphore.acquire_owned().await.unwrap();
             let url = format!("{}/{}", host, dir);
 
             if let Ok(resp) = client.get(&url).send().await {
-                if !accepted_clone.contains(&resp.status()) {
-                    return;
+                if accepted_clone.contains(&resp.status()) {
+                    let _ = state.emit(
+                        "dir-received",
+                        Dir {
+                            url,
+                            status: resp.status().as_str().to_string(),
+                        },
+                    );
                 }
-
-                let _ = state.emit(
-                    "dir-received",
-                    Dir {
-                        url,
-                        status: resp.status().as_str().to_string(),
-                    },
-                );
             }
-
-            drop(permit);
         });
         handles.push(handle);
     }

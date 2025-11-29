@@ -1,14 +1,17 @@
 <script lang="ts">
     import { Pane, PaneGroup, PaneResizer } from "paneforge";
-    import { listen, emit } from "@tauri-apps/api/event"
+    import { listen } from "@tauri-apps/api/event"
     import { open } from "@tauri-apps/plugin-dialog";
     import { invoke } from "@tauri-apps/api/core";
+    import { writeTextFile, BaseDirectory } from "@tauri-apps/plugin-fs";
+    import { tempDir, join } from "@tauri-apps/api/path";
 
     let discovered_dirs = $state([]);
     let wordlist_content = $state("");
     let scanning = $state(false);
     let host = $state("");
     let file_path = $state("");
+    let requests_per_second = $state(0);
 
     listen<object>("dir-scanning-finished", (event) => {
         scanning = false;
@@ -22,21 +25,33 @@
         });
     }
 
-    function start_scan() {
+    async function createTempWordlist(contents) {
+        const temp_dir = await tempDir();
+        const path = await join(temp_dir, "wordlist.txt");
+
+        await writeTextFile(path, contents);
+
+        return path;
+    }
+
+
+    async function start_scan() {
         scanning = true;
         if (scanning) {
-            /*
             if (file_path === "") {
-                invoke("probe_dirs", {host: host, wordlist: wordlist_content, file: false});
+                file_path = await createTempWordlist(wordlist_content);
+                console.log(file_path)
+                invoke("probe_dirs", {host: host, wordlist: file_path, rateLimit: requests_per_second});
+            } else {
+                invoke("probe_dirs", {host: host, wordlist: file_path, rateLimit: requests_per_second});
             }
-            */
 
-            invoke("probe_dirs", {host: host, wordlist: file_path, isFile: true});
             console.log("Started scanning");
         }
     }
 
     listen<object>("dir-received", (event) => {
+        console.log("test");
         discovered_dirs.push(event.payload);
     });
 </script>
@@ -88,6 +103,10 @@
                     <p>{file_path}</p>
                     <textarea name="" id="" class="border rounded w-1/3 h-70 min-h-0 resize-none overflow-auto" bind:value={wordlist_content}></textarea>
                 </div>
+                <h1 class="pt-1">Requests-per-second</h1>
+                <div class="flex flex-col pl-5 gap-2 pt-1 pb-2">
+                    <input type="number" bind:value={requests_per_second} class="w-1/3 border rounded p-1">
+                </div>
             </div>
             <div class="h-0.75 w-full bg-[#25272D]">
             </div>
@@ -98,10 +117,4 @@
 </div>
 
 <style>
-    input[type="file"]::file-selector-button {
-        background-color: #EDE9E7;
-        color: #25272D;
-        padding: 0.2em;
-        border-radius: 2px;
-    }
 </style>
