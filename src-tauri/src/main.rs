@@ -313,7 +313,7 @@ fn parse_jwt_token(raw_token: String, secret: String) -> JwtParseResult {
     println!("{}", payload_json);
 
     for claim in REQUIRED_CLAIMS {
-        if payload_json.get(claim).is_none() {
+        if header_json.get(claim).is_none() {
             results.notes.push(JwtNote::new(
                 "warning".to_string(),
                 format!("Claim {} not found in JWT", claim).to_string(),

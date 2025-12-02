@@ -150,11 +150,11 @@
         filtered_requests = [];
     }
 
-    function send_to_forward() {
+    function send_to_repeater() {
         if (!selected_entry) return;
 
         forward_requests.update((forw) => [...forw, {entry: selected_entry, raw: http_editor_text}]);
-        goto("/forward");
+        goto("/repeater");
     }
 
     function filter() {
@@ -200,7 +200,7 @@
                             <select name="request_display_type" id="" class="">
                                 <option value="original">Original</option>
                             </select>
-                            <button class="bg-[#25272D] p-1 rounded hover:cursor-pointer" onclick={() => send_to_forward()}>
+                            <button class="bg-[#25272D] p-1 rounded hover:cursor-pointer" onclick={() => send_to_repeater()}>
                                 Send to Repeater
                             </button>
                         </div>
