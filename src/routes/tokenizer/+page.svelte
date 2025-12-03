@@ -189,7 +189,7 @@
         <PaneResizer class="w-1 cursor-col-resize bg-[#25272d]" />
         <Pane>
             <PaneGroup direction="vertical">
-                <Pane class="bg-[#2F323A] flex flex-col">
+                <Pane class="bg-[#2F323A] flex flex-col rounded">
                     <div class="text-md w-full h-12 flex flex-row pl-3 items-center justify-between pr-5">
                         <p> Raw JWT </p>
                     </div>
@@ -200,7 +200,7 @@
                     </div>
                 </Pane>
                 <PaneResizer class="bg-[#25272d] h-0.75 w-full cursor-col-resize" />
-                <Pane class="bg-[#2F323A] w-full flex flex-col">
+                <Pane class="bg-[#2F323A] w-full flex flex-col rounded">
                     <div class="text-md w-full h-12 flex flex-row pl-3 items-center justify-between pr-5">
                         <p> Secret </p>
                     </div>

@@ -1,11 +1,16 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+use base64::prelude::BASE64_STANDARD;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use futures::StreamExt;
+use futures::stream::FuturesUnordered;
 use jsonwebtoken::crypto::sign;
 use jsonwebtoken::*;
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::io::{self, BufRead};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, process::Stdio, sync::Arc};
@@ -66,7 +71,8 @@ pub fn run() {
             send_request,
             parse_jwt_token,
             encode_jwt,
-            probe_dirs
+            probe_dirs,
+            bruteforce
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -511,6 +517,146 @@ async fn probe_dirs(host: String, wordlist: String, rate_limit: usize, state: Ap
         let _ = h.await;
     }
     let _ = state.emit("dir-scanning-finished", {});
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum AttackType {
+    Form,
+    Basic
+}
+
+#[tauri::command]
+async fn bruteforce(file_paths: Vec<String>, attack_type: String, url: String, app_handle: AppHandle) {
+    let attack_type = match attack_type.as_str() {
+        "form" => AttackType::Form,
+        "basic" => AttackType::Basic,
+        _ => {
+            AttackType::Basic
+        }
+    };
+
+    let read_lines = |path: &PathBuf| -> io::Result<Vec<String>> {
+        let file = std::fs::File::open(path).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let reader = std::io::BufReader::new(file);
+        Ok(reader.lines().filter_map(Result::ok).collect())
+    };
+
+    let client = Client::new();
+
+    let users_path = PathBuf::from(Path::new(&file_paths[0]));
+    let users = match read_lines(&users_path) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Failed to read users file: {e}");
+            Vec::new()
+        }
+    };
+
+    let users_path = PathBuf::from(Path::new(&file_paths[1]));
+    let passwords = match read_lines(&users_path) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("Failed to read users file: {e}");
+            Vec::new()
+        }
+    };
+
+    let responses: Vec<(String, String, String)> = send_reqs(Arc::new(client), url.clone(), users, passwords, attack_type).await.iter().map(|val| (val.0.clone(), val.1.clone(), url.clone())).collect();
+    
+    app_handle.emit("bruteforce-responses", responses);
+}
+
+async fn send_req(client: Arc<Client>, url: &String, user: Arc<String>, pass: String, method: Method, attack_type: AttackType) -> anyhow::Result<Option<(String, String)>> {
+    let mut request;
+    match method {
+        Method::GET => {
+            request = client.get(url);
+        }, 
+        Method::POST => {
+            request = client.post(url);
+        },
+        _ => {
+            return Err(anyhow::anyhow!("Invalid method given"))
+        }
+    };
+
+    match attack_type {
+        AttackType::Form => {
+            let body = format!("username={}&password={}", user, pass);
+            request = request
+                .body(body)
+                .header("Content-Type", "application/x-www-form-urlencoded");
+        },
+        AttackType::Basic => {
+            let auth_header = BASE64_STANDARD.encode(format!("{}:{}", user, pass));
+            request = request.header("Authorization", format!("Basic {}", auth_header));
+        }
+    }
+
+    let res = request.send().await?;
+    let status = res.status();
+    
+    if status.is_success() || status.is_redirection() {
+        return Ok(Some((user.to_string(), pass)))
+    }
+
+    Ok(None)
+}
+
+async fn send_reqs(
+    client: Arc<Client>,
+    url: String,
+    users: Vec<String>,
+    passwords: Vec<String>,
+    attack_type: AttackType
+) -> Vec<(String, String)> {
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<(String, String)>(4096);
+    let url = Arc::new(url);
+    let method = Arc::new(match attack_type {
+        AttackType::Basic => Method::GET,
+        AttackType::Form => Method::POST,
+    });
+
+    let mut futures = FuturesUnordered::new();
+
+    for user in users {
+        let user = Arc::new(user);
+        for pass in passwords.iter() {
+            let client = client.clone();
+            let user = user.clone();
+            let url = url.clone();
+            let method = method.clone();
+            let tx = tx.clone();
+            let pass = pass.clone();
+
+            futures.push(async move {
+                let res = 
+                send_req(
+                    client, 
+                    &url, 
+                    user, 
+                    pass, 
+                    (*method).clone(), 
+                    attack_type
+                ).await;
+
+                if let Ok(Some(found)) = res {
+                    let _ = tx.send(found).await;
+                }
+            });
+        }
+    }
+
+    drop(tx);
+
+    while futures.next().await.is_some() {}
+
+    let mut results = Vec::new();
+    while let Some(r) = rx.recv().await {
+        results.push(r);
+    }
+
+    results
 }
 
 fn main() {

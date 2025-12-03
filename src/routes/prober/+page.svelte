@@ -3,7 +3,7 @@
     import { listen } from "@tauri-apps/api/event"
     import { open } from "@tauri-apps/plugin-dialog";
     import { invoke } from "@tauri-apps/api/core";
-    import { writeTextFile, BaseDirectory } from "@tauri-apps/plugin-fs";
+    import { writeTextFile } from "@tauri-apps/plugin-fs";
     import { tempDir, join } from "@tauri-apps/api/path";
 
     let discovered_dirs = $state([]);
