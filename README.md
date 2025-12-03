@@ -2,8 +2,8 @@
 
 ## About Snare
 ### Built With
-Svelte
-Tauri
+- Svelte
+- Tauri
 ### Components
 Repeater – allows the user to build and send custom HTTP(S) requests, test endpoints, analyze tokens, and replay previously captured requests.
 Tokenizer – a JWT tool for inspection, analysis, and generation of tokens, including identification of structural weaknesses.
