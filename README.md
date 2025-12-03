@@ -5,10 +5,10 @@
 - Svelte
 - Tauri
 ### Components
-Repeater – allows the user to build and send custom HTTP(S) requests, test endpoints, analyze tokens, and replay previously captured requests.
-Tokenizer – a JWT tool for inspection, analysis, and generation of tokens, including identification of structural weaknesses.
-Prober – a web directory brute‑force tool for discovering hidden directories and resources on a server.
-Bruter – a brute‑force tool for, among other things, HTTP forms and HTTP Basic Authentication.
+- Repeater – allows the user to build and send custom HTTP(S) requests, test endpoints, analyze tokens, and replay previously captured requests.
+- Tokenizer – a JWT tool for inspection, analysis, and generation of tokens, including identification of structural weaknesses.
+- Prober – a web directory brute‑force tool for discovering hidden directories and resources on a server.
+- Bruter – a brute‑force tool for, among other things, HTTP forms and HTTP Basic Authentication.
 
 ## Getting Started
 ### Prerequisites
