@@ -9,7 +9,8 @@
 		{ name: "Repeater", path: "/repeater", image: "./forward.png" },
 		{ name: "Tokenizer", path: "/tokenizer", image: "./proxy.png"  },
 		{ name: "Prober", path: "/prober", image: "./proxy.png"  },
-		{ name: "Bruter", path: "/bruter", image: "./proxy.png"  }
+		{ name: "Bruter", path: "/bruter", image: "./proxy.png"  },
+		//{ name: "History", path: "/settings", image: "./proxy.png"  }
 	];
 
 	let side_menu = $state(true);
