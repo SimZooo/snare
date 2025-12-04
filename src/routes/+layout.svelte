@@ -1,8 +1,10 @@
 <script>
 	import favicon from '$lib/assets/favicon.svg';
+	import { page } from '$app/state';
 	import "../app.css";
 
 	let pages = [
+		{ name: "Scopes", path: "/scopes", image: "./proxy.png"  },
 		{ name: "Intercept", path: "/", image: "./intercept.png" },
 		{ name: "Repeater", path: "/repeater", image: "./forward.png" },
 		{ name: "Tokenizer", path: "/tokenizer", image: "./proxy.png"  },
@@ -25,14 +27,11 @@
 	<div class="w-50 h-full flex flex-col">
 		<div class="w-full h-[4em] items-center justify-center flex">
 		</div>
-		<div class="w-full h-full bg-[#2F323A] ms-2 mb-2 rounded flex flex-col justify-between mt-1">
-			{#each pages as page}
-				<a href="{page.path}" class="w-full h-fit gap-5 flex justify-center p-3 align-middle items-center">
-					<!--<img src="{page.image}" alt="" class="w-6">-->
-					<p>{page.name}</p>
+		<div class="w-full h-full bg-[#2F323A] ms-2 mb-2 rounded flex flex-col mt-1 text-sm">
+			{#each pages as p}
+				<a href="{p.path}" style="color: {page.url.pathname === p.path ? "#DAA049" : "#EDE9E7"}" class="w-full h-fit p-1 hover:bg-gray-500 rounded">
+					{p.name}
 				</a>
-				<div class="h-0.75 w-full bg-[#25272D]">
-				</div>
 			{/each}
 			<div class="w-full h-full flex items-end justify-center pb-4">
 				<button class="text-center hover:cursor-pointer" onclick={() => side_menu = false}>&lt; Collapse</button>
@@ -45,9 +44,10 @@
 		</div>
 		<div class="w-20 h-full flex items-start bg-[#2F323A] rounded mb-2 ms-2 p-2 flex-col justify-end">
 			<div class="gap-4 flex flex-col">
-				{#each pages as page}
-					<a href="{page.path}" class="w-full pl-4 gap-5 flex">
-						<img src="{page.image}" alt="" class="w-6">
+				{#each pages as p}
+					<a href="{p.path}" class="w-full pl-4 gap-5 flex {page.url.pathname === p.path ? "text-[#DAA049]" : ""}">
+						{page.url.pathname} {p.path}
+						<img src="{p.image}" alt="" class="w-6">
 					</a>
 				{/each}
 			</div>

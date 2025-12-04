@@ -11,12 +11,11 @@
     import { select } from "three/tsl";
     import { onMount, tick } from "svelte";
     import { construct_response_packet, forward_request, parse_response_from_payload, type HttpResRecv, type Response } from "$lib/network";
+    import { forwarded_requests, forwarded_responses } from "$lib/store";
 
     let http_editor_text = $state("");
     let response_editor_text = $state("");
     let current = $state();
-    let forwarded_requests = persisted("forwarded_requests", []);
-    let forward_responses = persisted("forward_responses", []);
     let current_response: Response = $state({} as Response);
 
     const editor_theme = EditorView.theme({
@@ -38,7 +37,7 @@
     function set_request(id: number) {
         current = {index: id, request: $forwarded_requests[id]};
         http_editor_text = current.request.raw;
-        if (forward_responses[id]) {
+        if (forwarded_responses[id]) {
             response_editor_text = construct_response_packet(current_response);
         } else {
             response_editor_text = "";
@@ -56,7 +55,7 @@
     listen<HttpResRecv>("forwarded-response-received", (event) => {
         current_response = parse_response_from_payload(event.payload);
         response_editor_text = construct_response_packet(current_response);
-        $forward_responses[current.index] = current_response;
+        $forwarded_responses[current.index] = current_response;
     });
 </script>
 <div class="pr-2 pl-4 pb-2 w-full h-full grid grid-rows-[4em_auto]">
