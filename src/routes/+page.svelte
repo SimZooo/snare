@@ -5,6 +5,7 @@
     import { persisted, type Persisted } from 'svelte-persisted-store'
 	import { PaneGroup, Pane, PaneResizer } from "paneforge";
 
+    import { check_request_scope } from "$lib/scope";
     import { EditorView } from "@codemirror/view";
     import CodeMirror from "svelte-codemirror-editor";
     import ResizableTable from "./components/ResizableTable.svelte";
@@ -12,9 +13,8 @@
     import { goto } from "$app/navigation";
     import { construct_request_packet, construct_response_packet, parse_request_from_payload, parse_response_from_payload, type HttpReqRecv, type HttpResRecv, type Request, type Response } from "$lib/network";
     import { filter_query } from "$lib/search";
+    import { responses, requests, forwarded_requests, forwarded_responses } from "$lib/store";
 
-    let requests: Persisted<Request[]> = persisted("requests", []);
-    let responses: Persisted<Response[]> = persisted("responses", []);
     let pending_responses: Response[] = $state([]);
     let search = $state("");
 
@@ -22,9 +22,6 @@
     let selected_res: Response = $state();
 
     let intercept_state = $state(false);
-
-    let forward_requests = persisted("forwarded_requests", []);
-    let forward_responses = persisted("forward_responses", []);
     let filtered_requests = $state($requests);
 
     onMount(() => {
@@ -53,6 +50,9 @@
         let payload = event.payload;
 
         let request = parse_request_from_payload(payload);
+        if (!check_request_scope(request) || $requests.find((req) => req.id === request.id)) {
+            return;
+        }
         pending_responses = pending_responses.filter((res) => {
             if (res.uuid === request.uuid) {
                 request.status = res.status;
@@ -64,7 +64,6 @@
         });
 
         requests.update((reqs) =>
-            //if (reqs.some(r => r.uuid === request.uuid)) return reqs; 
             [...reqs, request]
         );
         if (search === "") {
@@ -145,15 +144,15 @@
         http_editor_text = "";
         selected_res = undefined;
         selected_entry = undefined;
-        forward_requests.update((_) => []);
-        forward_responses.update((_) => []);
+        forwarded_requests.update((_) => []);
+        forwarded_responses.update((_) => []);
         filtered_requests = [];
     }
 
     function send_to_repeater() {
         if (!selected_entry) return;
 
-        forward_requests.update((forw) => [...forw, {entry: selected_entry, raw: http_editor_text}]);
+        forwarded_requests.update((forw) => [...forw, {entry: selected_entry, raw: http_editor_text}]);
         goto("/repeater");
     }
 
