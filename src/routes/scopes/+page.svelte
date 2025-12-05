@@ -18,6 +18,7 @@
             scopes[$current_scope_index] = {...current_scope};
             return scopes;
         });
+        console.log($scopes, current_scope);
     }
     
     function delete_scope(index: number) {
@@ -53,7 +54,7 @@
             <div class="h-full bg-[#25272D] m-1 rounded">
                 {#each $scopes as scope, i}
                     <div class="w-full {$current_scope_index === i ? "selected" : ""} p-1 flex flex-row" >
-                        <button class="text-left w-full" onclick={() => { $current_scope_index= i; current_scope = {...$scopes[i]} }}>{scope.name}</button>
+                        <button class="text-left w-full" onclick={() => { $current_scope_index= i; current_scope = {...$scopes[i]}; in_scope_text = current_scope.in_scope.join("\n"); out_of_scope_text = current_scope.out_of_scope.join("\n"); }}>{scope.name}</button>
                         <!-- svelte-ignore a11y_consider_explicit_label -->
                         <button class="hover:cursor-pointer mr-1" onclick={() => delete_scope(i)}>
                             <svg class="w-5 text-red-400 fill-[#25272D]" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
