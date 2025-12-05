@@ -14,7 +14,7 @@
     let wordlists_content = $state(["", ""]);
     let scanning = $state(false);
     let url = $state("");
-    let credentials = $state([["admin", "yellow", "https://10.10.10.10/end/point"]]);
+    let credentials = $state([]);
 
     async function browse_files() {
         let path = await open({
@@ -42,8 +42,6 @@
         }
 
         invoke("bruteforce", {filePaths: file_paths, attackType: attack_type, url: url})
-
-        console.log("Started scanning");
     }
 
     listen<[string, string]>("bruteforce-responses", (event) => {
@@ -138,9 +136,9 @@
                     <div class="w-full h-full p-2 flex flex-row">
                         {#each credentials as response, i}
                             {i+1}. 
-                            Username:&nbsp;<p class="text-green-600"> {response[0]} </p>&nbsp;
-                            Password:&nbsp; <p class="text-green-600"> {response[1]} </p>&nbsp;
-                            Host:&nbsp; <p class="text-green-600"> {response[2]} </p>&nbsp;
+                            Username:&nbsp;<p class="text-green-600"> {response[0][0]} </p>&nbsp;
+                            Password:&nbsp; <p class="text-green-600"> {response[0][1]} </p>&nbsp;
+                            Host:&nbsp; <p class="text-green-600"> {response[0][2]} </p>&nbsp;
                         {/each}
                     </div>
                 </Pane>
