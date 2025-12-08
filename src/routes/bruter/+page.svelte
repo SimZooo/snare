@@ -51,7 +51,7 @@
     });
 </script>
 
-<div class="w-full h-full grid grid-rows-[4em_auto] pb-2 pr-2 pl-4">
+<div class="w-full h-full grid grid-rows-[4em_auto]">
     <div class="w-full h-full flex items-center">
         <button
             class="flex flex-row rounded place-items-center border-2 p-0 relative overflow-hidden w-fit h-fit"
