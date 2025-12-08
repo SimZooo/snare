@@ -56,7 +56,7 @@
     });
 </script>
 
-<div class="w-full h-full grid grid-rows-[4em_auto] pb-2 pr-2 pl-4">
+<div class="w-full h-full grid grid-rows-[4em_auto]">
     <div></div>
     <PaneGroup direction="horizontal" class="flex flex-col">
         <Pane class="bg-[#2F323A] rounded flex flex-col">

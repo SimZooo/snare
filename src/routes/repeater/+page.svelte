@@ -58,7 +58,7 @@
         $forwarded_responses[current.index] = current_response;
     });
 </script>
-<div class="pr-2 pl-4 pb-2 w-full h-full grid grid-rows-[4em_auto]">
+<div class="w-full h-full grid grid-rows-[4em_auto]">
     <div class="w-full h-full flex flex-col justify-center">
         <div class="flex flex-row gap-2">
             {#each $forwarded_requests as req, i}

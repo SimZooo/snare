@@ -34,7 +34,7 @@
     }
 </script>
 
-<div class="w-full h-full grid grid-rows-[4em_auto] pb-2 pr-2 pl-4">
+<div class="w-full h-full grid grid-rows-[4em_auto]">
     <div>
     </div>
     <PaneGroup direction="horizontal" class="w-full h-full">

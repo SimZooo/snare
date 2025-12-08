@@ -13,7 +13,7 @@
     import { goto } from "$app/navigation";
     import { construct_request_packet, construct_response_packet, parse_request_from_payload, parse_response_from_payload, type HttpReqRecv, type HttpResRecv, type Request, type Response } from "$lib/network";
     import { filter_query } from "$lib/search";
-    import { responses, requests, forwarded_requests, forwarded_responses } from "$lib/store";
+    import { responses, requests, forwarded_requests, forwarded_responses, scan_requests } from "$lib/store";
 
     let pending_responses: Response[] = $state([]);
     let search = $state("");
@@ -23,6 +23,7 @@
 
     let intercept_state = $state(false);
     let filtered_requests = $state($requests);
+    let send_to_val = $state("");
 
     onMount(() => {
         requests.update((reqs) =>
@@ -149,11 +150,24 @@
         filtered_requests = [];
     }
 
-    function send_to_repeater() {
-        if (!selected_entry) return;
+    function send_to() {
+        console.log();
+        switch (send_to_val) {
+            case "repeater": {
+                if (!selected_entry) return;
 
-        forwarded_requests.update((forw) => [...forw, {entry: selected_entry, raw: http_editor_text}]);
-        goto("/repeater");
+                forwarded_requests.update((forw) => [...forw, { entry: selected_entry, raw: http_editor_text }]);
+                goto("/repeater");
+                break;
+            }
+            case "scan": {
+                if (!selected_entry) return;
+
+                scan_requests.update((scan) => [...scan, { entry: selected_entry, raw: http_editor_text }]);
+                goto("/scan");
+                break;
+            }
+        }
     }
 
     function filter() {
@@ -161,7 +175,7 @@
     }
 </script>
 
-<div class="w-full h-full grid grid-rows-[4em_auto] pb-2 pr-2">
+<div class="w-full h-full grid grid-rows-[4em_auto]">
     <div class="pl-6 w-full h-full items-center align-middle flex justify-between">
         <div class="flex gap-2 items-center">
             <div class="flex flex-col border rounded p-0.5 text-gray-500 border-gray-500 w-fit h-fit">
@@ -181,7 +195,7 @@
         </div>
     </div>
 
-    <PaneGroup direction="vertical" class="w-full h-full pl-4">
+    <PaneGroup direction="vertical" class="w-full h-full">
         <Pane defaultSize={40} class="bg-[#2F323A] rounded flex flex-col">
             <div class="h-full w-full overflow-auto">
                 <ResizableTable rows={requests_rows} cols={filtered_requests} bind:selected={selected_entry}/>
@@ -199,9 +213,16 @@
                             <select name="request_display_type" id="" class="">
                                 <option value="original">Original</option>
                             </select>
-                            <button class="bg-[#25272D] p-1 rounded hover:cursor-pointer" onclick={() => send_to_repeater()}>
-                                Send to Repeater
-                            </button>
+
+                            <div class="bg-[#25272D] p-1 rounded">
+                                <button class="hover:cursor-pointer" onclick={() => send_to()}>
+                                    Send to 
+                                </button>
+                                <select name="send_to" id="" class="bg-[#25272D] outline-none" bind:value={send_to_val}>
+                                    <option value="repeater">Repeater</option>
+                                    <option value="scan">Scan</option>
+                                </select>
+                            </div>
                         </div>
                     </div>
                     <div class="h-0.75 w-full bg-[#25272D]">
@@ -233,11 +254,11 @@
 
 <style>
     select {
-        background-color: #2F323A;
+        background-color: #25272D;
     }
 
     select option {
-        background-color: #2F323A;
+        background-color: #25272D;
     }
 
     .button_enabled {
