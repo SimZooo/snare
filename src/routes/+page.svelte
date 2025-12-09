@@ -49,7 +49,6 @@
     
     listen<HttpReqRecv>("request-received", (event) => {
         let payload = event.payload;
-        console.log(payload);
 
         let request = parse_request_from_payload(payload);
         if (!check_request_scope(request) || $requests.find((req) => req.id === request.id)) {
@@ -82,6 +81,8 @@
             return;
         }
 
+        let content_length = res.headers.find((header) => header[0] === "content-length")[1] ?? 0;
+
         res.id = req.id;
         requests.update((reqs) => {
             const index = reqs.findIndex((r) => r.id === req.id);
@@ -90,7 +91,8 @@
             new_reqs[index] = {
                 ...new_reqs[index],
                 status: res.status,
-                state: "Complete"
+                state: "Complete",
+                length: content_length
             }
             return new_reqs;
         });
@@ -152,19 +154,17 @@
     }
 
     function send_to() {
-        console.log();
         switch (send_to_val) {
             case "repeater": {
                 if (!selected_entry) return;
-
-                forwarded_requests.update((forw) => [...forw, { entry: selected_entry, raw: http_editor_text }]);
+                forwarded_requests.update((forw) => [...forw, selected_entry ]);
                 goto("/repeater");
                 break;
             }
             case "scan": {
                 if (!selected_entry) return;
 
-                scan_requests.update((scan) => [...scan, { entry: selected_entry, raw: http_editor_text }]);
+                scan_requests.update((scan) => [...scan, selected_entry ]);
                 goto("/scan");
                 break;
             }
@@ -211,7 +211,7 @@
                     <div class="text-md w-full h-12 flex flex-row pl-3 items-center justify-between pr-5">
                         <p>{selected_entry ? selected_entry.destination ?? "":  "" }</p>
                         <div class="flex flex-row gap-4">
-                            <select name="request_display_type" id="" class="">
+                            <select name="request_display_type" class="bg-[#25272D] outline-none rounded" id="">
                                 <option value="original">Original</option>
                             </select>
 
@@ -236,16 +236,16 @@
                 </Pane>
                 <PaneResizer class="w-1 cursor-col-resize" />
                 <Pane class="bg-[#2F323A] rounded flex flex-col">
-                    <div class="text-md w-full h-12 flex flex-row pl-3 items-center justify-between pr-5" >
+                    <div class="text-md w-full h-12 flex flex-row pl-3 items-center justify-between pr-5 min-h-12" >
                         <p>Response</p>
-                        <p>{selected_res && selected_res.headers ? (get_key(selected_res.headers, "content-length") ?? "0") : ("0") } bytes</p>
+                        <p>{selected_entry?.length ?? 0} bytes</p>
                     </div>
-                    <div class="h-0.75 w-full bg-[#25272D]">
+                    <div class="min-h-0.75 w-full bg-[#25272D]">
                     </div>
-                    <CodeMirror bind:value={response_editor_text} class="w-full h-full flex-1 text-md" {extensions}/>
-                    <div class="h-0.75 w-full bg-[#25272D]">
+                    <CodeMirror bind:value={response_editor_text} class="w-full h-full flex-1 text-md min-h-0" {extensions}/>
+                    <div class="min-h-0.75 w-full bg-[#25272D]">
                     </div>
-                    <div class="w-full h-10">
+                    <div class="w-full min-h-10">
                     </div>
                 </Pane>
             </PaneGroup>

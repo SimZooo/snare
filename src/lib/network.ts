@@ -17,7 +17,7 @@ export type HttpReqRecv = {
     method: string
     path: string,
     host: string,
-    headers: object,
+    headers: [],
     body: string,
     id: string,
     raw: string,
@@ -26,7 +26,7 @@ export type HttpReqRecv = {
 export type HttpResRecv = {
     id: string,
     status: string,
-    headers: object,
+    headers: [],
     body: string,
     raw: string,
 };
@@ -34,7 +34,7 @@ export type HttpResRecv = {
 export type Request = {
     id: string,
     uuid: string,
-    headers: object,
+    headers: [],
     path: string,
     method: string,
     body: string,
@@ -48,7 +48,7 @@ export type Request = {
 export type Response = {
     uuid: string,
     id: string,
-    headers: object,
+    headers: [],
     body: string,
     status: string,
     raw: string,
@@ -58,7 +58,7 @@ export function parse_request_from_payload(payload: HttpReqRecv): Request {
     return {
         id: payload.id,
         uuid: payload.id,
-        headers: payload.headers ?? {},
+        headers: payload.headers ?? [],
         path: payload.path ?? "",
         method: payload.method ?? "",
         body: payload.body ?? "",
@@ -71,10 +71,11 @@ export function parse_request_from_payload(payload: HttpReqRecv): Request {
 }
 
 export function parse_response_from_payload(payload: HttpResRecv): Response {
+    console.log(payload);
     return {
         uuid: payload.id,
         id: payload.id,
-        headers: payload.headers ?? {},
+        headers: payload.headers ?? [],
         body: payload.body ?? "",
         status: payload.status ?? "",
         raw: payload.raw

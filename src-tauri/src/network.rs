@@ -14,8 +14,8 @@ pub async fn read_request(stream: &mut TcpStream) -> io::Result<String> {
 }
 
 pub async fn load_ca() -> io::Result<Issuer<'static, KeyPair>> {
-    let ca_key_path = "../private/ca.key.unencrypted";
-    let ca_cert_path = "../certs/ca.crt";
+    let ca_key_path = "resources/private/ca.key.unencrypted";
+    let ca_cert_path = "resources/certs/ca.crt";
 
     println!("Loading CA key from {}", ca_key_path);
     println!("Loading CA cert from {}", ca_cert_path);
