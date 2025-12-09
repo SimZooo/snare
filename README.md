@@ -15,7 +15,7 @@
 ### Prerequisites
 Coming soon
 ### Installation
-Download installer
+Download appropriate installer from releases: https://github.com/SimZooo/snare/releases/tag/v0.1.0
 
 ## Usage
 Coming soon
