@@ -11,16 +11,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
-use std::{collections::HashMap, process::Stdio, sync::Arc};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+use std::{collections::HashMap, sync::Arc};
 use tauri::http::{HeaderMap, HeaderName, HeaderValue};
 use tauri::{AppHandle, Emitter, State};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Command;
 use tokio::sync::Semaphore;
-use tokio::time::sleep;
+
+mod network;
+mod proxy;
 
 struct AppState {
     intercept: AtomicBool,
@@ -62,7 +63,7 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            tauri::async_runtime::spawn(run_proxy(Arc::new(app.handle().clone()), state_clone));
+            tauri::async_runtime::spawn(proxy::start_proxy(app.handle().clone(), state_clone));
             Ok(())
         })
         .manage(state)
@@ -76,81 +77,6 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-async fn run_proxy(app_handle: Arc<AppHandle>, state: Arc<AppState>) {
-    let root = env!("CARGO_MANIFEST_DIR");
-    let script_path = format!("{}\\..\\scripts\\proxy.py", root);
-    println!("{}", script_path);
-    let mut proxy_child = Command::new("mitmdump")
-        .arg("-p")
-        .arg("3009")
-        .arg("-s")
-        .arg(&script_path)
-        .arg("--set")
-        .arg("console_eventlog_verbosity=off")
-        .arg("--set")
-        .arg("stream_large_bodies=1")
-        .arg("--no-http2")
-        .arg("-q")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("Failed to start mitmdump");
-
-    let dump_out = proxy_child.stdout.take().unwrap();
-    let dump_err = proxy_child.stderr.take().unwrap();
-
-    let mut out_reader = BufReader::new(dump_out).lines();
-    let mut err_reader = BufReader::new(dump_err).lines();
-    let handle_clone = app_handle.clone();
-    let state_clone = state.clone();
-
-    tokio::spawn(async move {
-        loop {
-            while let Ok(Some(line)) = out_reader.next_line().await {
-                if state_clone.intercept.load(Ordering::Relaxed) {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-                        if let Some(_) = json.get("method") {
-                            let _ = handle_clone.clone().emit("request-received", json);
-                        } else {
-                            let _ = handle_clone.clone().emit("response-received", json);
-                        }
-                    }
-                } else {
-                    sleep(Duration::from_millis(500)).await;
-                }
-            }
-        }
-    });
-
-    let handle_clone = app_handle.clone();
-    let state_clone = state.clone();
-
-    // Read stderr in its own task
-    tokio::spawn(async move {
-        loop {
-            while let Ok(Some(line)) = err_reader.next_line().await {
-                if state_clone.intercept.load(Ordering::Relaxed) {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
-                        if let Some(_) = json.get("method") {
-                            let _ = handle_clone.clone().emit("request-received", json);
-                        } else {
-                            let _ = handle_clone.clone().emit("response-received", json);
-                        }
-                    }
-                } else {
-                    sleep(Duration::from_millis(500)).await;
-                }
-            }
-        }
-    });
-
-    println!("Proxy running...");
-
-    // IMPORTANT: Wait for process so it doesn’t get dropped
-    let status = proxy_child.wait().await.unwrap();
-    println!("[mitmdump exited] {status}");
 }
 
 #[tauri::command]
@@ -391,7 +317,7 @@ fn encode_jwt(header: String, payload: String, secret: String) -> JwtEncodeResul
     let mut result = JwtEncodeResult::default();
     let _ = match serde_json::from_str::<Value>(&payload) {
         Ok(vals) => vals,
-        Err(e) => {
+        Err(_) => {
             result.notes.push(JwtNote::new(
                 "error".to_string(),
                 "Invalid payload JSON".to_string(),
@@ -402,7 +328,7 @@ fn encode_jwt(header: String, payload: String, secret: String) -> JwtEncodeResul
 
     let header_json = match serde_json::from_str::<Value>(&header) {
         Ok(vals) => vals,
-        Err(e) => {
+        Err(_) => {
             result.notes.push(JwtNote::new(
                 "error".to_string(),
                 "Invalid payload JSON".to_string(),
@@ -563,7 +489,7 @@ async fn bruteforce(file_paths: Vec<String>, attack_type: String, url: String, a
 
     let responses: Vec<(String, String, String)> = send_reqs(Arc::new(client), url.clone(), users, passwords, attack_type).await.iter().map(|val| (val.0.clone(), val.1.clone(), url.clone())).collect();
     
-    app_handle.emit("bruteforce-responses", responses);
+    let _ = app_handle.emit("bruteforce-responses", responses);
 }
 
 async fn send_req(client: Arc<Client>, url: &String, user: Arc<String>, pass: String, method: Method, attack_type: AttackType) -> anyhow::Result<Option<(String, String)>> {

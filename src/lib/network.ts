@@ -19,8 +19,8 @@ export type HttpReqRecv = {
     host: string,
     headers: object,
     body: string,
-    cookies: object
-    id: string
+    id: string,
+    raw: string,
 };
 
 export type HttpResRecv = {
@@ -28,7 +28,7 @@ export type HttpResRecv = {
     status: string,
     headers: object,
     body: string,
-    cookies: object,
+    raw: string,
 };
 
 export type Request = {
@@ -50,7 +50,8 @@ export type Response = {
     id: string,
     headers: object,
     body: string,
-    status: string
+    status: string,
+    raw: string,
 }
 
 export function parse_request_from_payload(payload: HttpReqRecv): Request {
@@ -65,7 +66,7 @@ export function parse_request_from_payload(payload: HttpReqRecv): Request {
         state: "Waiting",
         status: "",
         length: payload.body?.length ?? 0,
-        raw: ""
+        raw: payload.raw
     };
 }
 
@@ -75,7 +76,8 @@ export function parse_response_from_payload(payload: HttpResRecv): Response {
         id: payload.id,
         headers: payload.headers ?? {},
         body: payload.body ?? "",
-        status: payload.status ?? ""
+        status: payload.status ?? "",
+        raw: payload.raw
     };
 }
 

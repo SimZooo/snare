@@ -49,6 +49,7 @@
     
     listen<HttpReqRecv>("request-received", (event) => {
         let payload = event.payload;
+        console.log(payload);
 
         let request = parse_request_from_payload(payload);
         if (!check_request_scope(request) || $requests.find((req) => req.id === request.id)) {
@@ -126,7 +127,7 @@
             return;
         }
 
-        http_editor_text = construct_request_packet(selected_entry);
+        http_editor_text = selected_entry.raw;
         let res = $responses.find((res) => res.uuid === selected_entry.uuid);
         selected_res = res;
         response_editor_text = construct_response_packet(res);
