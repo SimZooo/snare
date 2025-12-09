@@ -72,10 +72,8 @@ async fn parse_response(res: Response, id: String) -> io::Result<FlowResponse> {
         }
     }).collect::<Vec<String>>();
     if !headers.iter().any(|(k, _)| k.to_lowercase() == "content-length") {
-        println!("NO CONTENT-LENGTH");
         headers_raw.push(format!("content-length: {}", body.bytes().len().to_string()));
     }
-    println!("{:?}", headers_raw);
 
     let raw = vec![status_line, headers_raw.join(""), "\r\n".to_string(), body.clone()].join("");
 
@@ -121,6 +119,7 @@ enum Flow {
 }
 
 pub async fn start_proxy(app_handle: AppHandle, state: Arc<AppState>) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    println!("Started proxy");
     let listener = match TcpListener::bind("127.0.0.1:3009").await {
         Ok(listener) => listener,
         Err(e) => { eprintln!("Failed to bind listener {e}"); exit(1)}
@@ -151,7 +150,7 @@ pub async fn start_proxy(app_handle: AppHandle, state: Arc<AppState>) -> Result<
                     let _ = tx.send(flow_res).await;
 
                     Ok(()) as io::Result<()>
-                });
+                }).await.unwrap().unwrap();
             }
         }
     });
@@ -166,6 +165,7 @@ pub async fn start_proxy(app_handle: AppHandle, state: Arc<AppState>) -> Result<
         }
     }
 
+    println!("Stopped proxy");
     Ok(())
 }
 
@@ -246,8 +246,6 @@ async fn forward_to_client(raw: String) -> io::Result<Response> {
             }
             None => path.to_string(),
         };
-
-        println!("Sending {:?} to {}", method, url);
 
         let mut req = match method {
             "GET" => client.get(url.clone()),

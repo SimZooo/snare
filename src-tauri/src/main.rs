@@ -1,5 +1,5 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+//#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use base64::prelude::BASE64_STANDARD;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use futures::StreamExt;
@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 use tauri::http::{HeaderMap, HeaderName, HeaderValue};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::Semaphore;
@@ -49,8 +49,9 @@ struct AppResponse {
 struct Res {
     url: String,
     status: String,
-    headers: HashMap<String, String>,
+    headers: Vec<(String, String)>,
     body: String,
+    raw: String,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -63,7 +64,13 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            tauri::async_runtime::spawn(proxy::start_proxy(app.handle().clone(), state_clone));
+            let app_handle = app.handle().clone();
+            let task = tauri::async_runtime::spawn(async move {
+                proxy::start_proxy(app_handle, state_clone).await.unwrap();
+            });
+
+            app.manage(task);
+
             Ok(())
         })
         .manage(state)
@@ -153,8 +160,8 @@ async fn send_request(app: AppHandle, raw: String) {
 
             let body_bytes = res.bytes().await.unwrap();
             let body_string = String::from_utf8_lossy(&body_bytes).to_string();
-
-            response.body = body_string;
+            response.body = body_string.clone();
+            response.raw = [format!("HTTP/1.1 {}", response.status), response.headers.iter().map(|(k, v)| format!("{}: {}", k, v)).collect::<Vec<String>>().join("\r\n"), "".to_string(), body_string].join("\r\n");
 
             let _ = app.emit("forwarded-response-received", json!(response));
         }
