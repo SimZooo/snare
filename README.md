@@ -16,6 +16,7 @@
 Coming soon
 ### Installation
 Download appropriate installer from releases: https://github.com/SimZooo/snare/releases/tag/v0.1.0
+Download and approve the CA certificate: https://github.com/SimZooo/snare/blob/main/src-tauri/resources/certs/ca.crt
 
 ## Usage
 Coming soon
