@@ -1,48 +1,58 @@
-use std::{error::Error, io, process::exit, sync::{Arc, atomic::Ordering}};
+use std::{collections::HashMap, error::Error, io, process::exit, sync::{Arc, atomic::Ordering}, time::Duration};
 
 use hyper::HeaderMap;
+use log::{error, info};
 use rcgen::{Issuer, KeyPair};
 use reqwest::{Client, Response};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use tauri::{AppHandle, Emitter, http::{HeaderName, HeaderValue}};
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}};
+use serde_json::{Value, json};
+use snare_script::Script;
+use tauri::{AppHandle, Emitter, State, http::{HeaderName, HeaderValue}};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::Mutex, time::sleep};
 use tokio_rustls::{TlsAcceptor, server::TlsStream};
 use uuid::Uuid;
 
 use crate::{AppState, network::{create_server_config, generate_cert, get_domain, load_ca, read_request}};
 
 fn parse_request(raw: String, id: String) -> io::Result<FlowRequest> {
+    info!("Parsing request");
     let mut lines = raw.split("\r\n");
+    info!("Lines: {:?}", lines);
     let Some(status_line) = lines.next() else {
         return Err(io::Error::new(io::ErrorKind::InvalidData, 
             format!("Malformed request")))
     };
+    info!("Status line: {}", status_line);
 
     let mut status_line_split = status_line.split_whitespace();
     let Some(method) = status_line_split.next() else {
         return Err(io::Error::new(io::ErrorKind::InvalidData, 
             format!("Malformed request when parsing method")))
     };
+    info!("Method: {}", method);
 
     let Some(path) = status_line_split.next() else {
         return Err(io::Error::new(io::ErrorKind::InvalidData, 
             format!("Malformed request when parsing path")))
     };
+    info!("Path: {}", path);
 
     let mut raw_split = raw.split("\r\n\r\n");
     let Some(headers) = raw_split.next() else {
         return Err(io::Error::new(io::ErrorKind::InvalidData, 
             format!("Malformed request when parsing headers")))
     };
-    let Some(body) = raw_split.next() else {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, 
-            format!("Malformed request when parsing body")))
-    };
+    info!("Headers: {}", headers);
+
+    let body = raw_split.next().unwrap_or("");
+    info!("Body: {}", headers);
 
     let host = headers.split("\r\n").find(|line| line.to_lowercase().starts_with("host")).unwrap_or("").split(":").skip(1).next().unwrap_or("");
+    info!("Host: {}", host);
+    let req = FlowRequest::new(id.to_string(), method.to_string(), path.to_string(), host.to_string(), headers.to_string(), body.to_string(), raw.to_string());
+    info!("Parsed request: {:?}", req);
 
-    Ok(FlowRequest::new(id.to_string(), method.to_string(), path.to_string(), host.to_string(), headers.to_string(), body.to_string(), raw.to_string()))
+    Ok(req)
 }
 
 async fn parse_response(res: Response, id: String) -> io::Result<FlowResponse> {
@@ -118,54 +128,88 @@ enum Flow {
     Response(FlowResponse),
 }
 
+async fn handle_connection(tx: Arc<tokio::sync::mpsc::Sender<Flow>>, mut tls_stream: TlsStream<TcpStream>, req_raw: String, scripts: &Arc<Mutex<HashMap<String, (Script, String, bool)>>>) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    let scripts = scripts.lock().await;
+    let mut req = req_raw.clone();
+    info!("Scripts: {:?}", scripts.keys());
+
+    // Iterate through each script and chain
+    for (script, args, enabled) in scripts.values() {
+        info!("Running script: {}", script.metadata.name);
+        if !enabled {
+            continue;
+        }
+        req = script.execute(req.clone(), args.clone()).await.map_err(|e| {
+            error!("{e}");
+            io::Error::new(io::ErrorKind::Other, format!("ScriptError: {e}"))
+        })?;
+        info!("Script result: {}", req);
+    }
+    // Receive from client
+    let id = Uuid::new_v4().to_string();
+    let _ = tx.send(Flow::Request(parse_request(req.clone(), id.clone())?)).await;
+    info!("Flow sent to receiver");
+
+    // Send to and receive from server
+    info!("Forwarding to client");
+    let res = forward_to_client(req).await?;
+    info!("Parsing response");
+    let flow_res = Flow::Response(parse_response(res, id).await?);
+    // Send response back to client
+    if let Flow::Response(res) = &flow_res {
+        let _ = tls_stream.write_all(res.raw.as_bytes()).await;
+        let _ = tls_stream.flush().await;
+    }
+
+    let _ = tx.send(flow_res).await;
+    info!("Sent response flow");
+
+    Ok(())
+}
+
 pub async fn start_proxy(app_handle: AppHandle, state: Arc<AppState>) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    println!("Started proxy");
+    info!("Started proxy");
     let listener = match TcpListener::bind("127.0.0.1:3009").await {
         Ok(listener) => listener,
-        Err(e) => { eprintln!("Failed to bind listener {e}"); exit(1)}
+        Err(e) => { error!("Failed to bind listener {e}"); exit(1)}
     };
 
     let issuer = Arc::new(load_ca().await.unwrap());
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Flow>(100);
+    let tx = Arc::new(tx);
+    let state_clone = state.clone();
+    let scripts = state.scripts.clone();
 
     tokio::spawn(async move {
         loop {
+            let scripts_clone = scripts.clone();
+            if !state_clone.intercept.load(Ordering::Relaxed) {
+                continue;
+            }
+
             if let Ok((stream, _)) = listener.accept().await {
                 let issuer = issuer.clone();
                 let tx = tx.clone();
                 tokio::spawn(async move {
-                    // Receive from client
-                    let (req_raw, mut tls_stream) = handle_client_connection(stream, issuer).await?;
-                    let id = Uuid::new_v4().to_string();
-                    let _ = tx.send(Flow::Request(parse_request(req_raw.clone(), id.clone())?)).await;
-                    // Send to and receive from server
-                    let res = forward_to_client(req_raw).await?;
-                    let flow_res = Flow::Response(parse_response(res, id).await?);
-                    // Send response back to client
-                    if let Flow::Response(res) = &flow_res {
-                        let _ = tls_stream.write_all(res.raw.as_bytes()).await;
-                        let _ = tls_stream.flush().await;
-                    }
+                    let (req_raw, tls_stream) = handle_client_connection(stream, issuer).await?;
+                    handle_connection(tx, tls_stream, req_raw, &scripts_clone).await?;
 
-                    let _ = tx.send(flow_res).await;
-
-                    Ok(()) as io::Result<()>
-                }).await.unwrap().unwrap();
+                    Ok::<(), Box<dyn Error + Send + Sync + 'static>>(())
+                });
             }
+            sleep(Duration::from_millis(100)).await;
         }
     });
 
     while let Some(flow) = rx.recv().await {
-        if state.intercept.load(Ordering::Relaxed) {
-            if let Flow::Request(req) = &flow {
-                let _ = app_handle.emit("request-received", json!(req));
-            } else if let Flow::Response(res) = &flow {
-                let _ = app_handle.emit("response-received", json!(res));
-            }
+        if let Flow::Request(req) = &flow {
+            let _ = app_handle.emit("request-received", json!(req));
+        } else if let Flow::Response(res) = &flow {
+            let _ = app_handle.emit("response-received", json!(res));
         }
     }
 
-    println!("Stopped proxy");
+    info!("Stopped proxy");
     Ok(())
 }
 
@@ -215,7 +259,9 @@ async fn forward_to_client(raw: String) -> io::Result<Response> {
             .map(|line| line.to_string())
             .collect();
 
-        let request_line = headers_str.lines().next().unwrap();
+        let Some(request_line) = headers_str.lines().next() else {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Malformed request data"))
+        };
         let (method, path, _version) =
             match request_line.split_whitespace().collect::<Vec<&str>>()[..] {
                 [m, p, v] => (m, p, v),
@@ -232,8 +278,12 @@ async fn forward_to_client(raw: String) -> io::Result<Response> {
                     host = Some(value.trim().to_string());
                 }
 
-                let hname = HeaderName::from_bytes(key.trim().as_bytes()).unwrap();
-                let hvalue = HeaderValue::from_str(value.trim()).unwrap();
+                let hname = HeaderName::from_bytes(key.trim().as_bytes()).map_err(|e|
+                    io::Error::new(io::ErrorKind::InvalidData, format!("Invalid header data: {e}"))
+                )?;
+                let hvalue = HeaderValue::from_str(value.trim()).map_err(|e|
+                    io::Error::new(io::ErrorKind::InvalidData, format!("Invalid header data: {e}"))
+                )?;
                 headers.insert(hname, hvalue);
             }
         }
@@ -262,13 +312,14 @@ async fn forward_to_client(raw: String) -> io::Result<Response> {
             req = req.body(body.to_string());
         }
 
+        info!("{:?}", req);
+
         let res = req.send().await.map_err(|e| {
             io::Error::new(io::ErrorKind::InvalidData, 
                 format!("Failed sending request to server: {}", e))
         })?;
 
         return Ok(res)
-
     }
 
     Err(io::Error::new(io::ErrorKind::InvalidData, 
