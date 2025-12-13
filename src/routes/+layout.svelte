@@ -7,6 +7,7 @@
 	let pages = $state([
 		{ name: "Project", members: [
 			{ name: "Scopes", path: "/scopes", image: "./proxy.png"  },
+			{ name: "Extensions", path: "/extensions", image: "./proxy.png"  },
 		],  expanded: true },
 		{ name: "Proxy", members: [
 			{ name: "Intercept", path: "/", image: "./intercept.png" },
