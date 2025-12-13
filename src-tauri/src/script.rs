@@ -39,14 +39,15 @@ pub async fn remove_script(state: State<'_, Arc<AppState>>, name: String) -> Res
 }
 
 #[tauri::command]
-pub async fn update_script(state: State<'_, Arc<AppState>>, name: String, args: String, enabled: bool) -> Result<(), String> {
+pub async fn update_script(state: State<'_, Arc<AppState>>, name: String, args: Vec<Value>, enabled: bool) -> Result<(), String> {
     let mut scripts = state.scripts.lock().await;
+    let args = json!(args).to_string();
+
+    info!("Updating script with args: {} and state: {}", args, enabled);
 
     let Some((_, args_s, enabled_s)) = scripts.get_mut(&name) else {
         return Err("Script is not added. Run add_script first".to_string());
     };
-
-    info!("Updating script with args: {} and state: {}", args, enabled);
 
     *args_s = args;
     *enabled_s = enabled;

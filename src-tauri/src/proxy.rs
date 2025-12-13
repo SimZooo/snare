@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, io, process::exit, sync::{Arc, atomic::Ordering}, time::Duration};
+use std::{collections::HashMap, error::Error, io, ops::Deref, process::exit, sync::{Arc, atomic::Ordering}, time::Duration};
 
 use hyper::HeaderMap;
 use log::{error, info};
@@ -15,42 +15,33 @@ use uuid::Uuid;
 use crate::{AppState, network::{create_server_config, generate_cert, get_domain, load_ca, read_request}};
 
 fn parse_request(raw: String, id: String) -> io::Result<FlowRequest> {
-    info!("Parsing request");
     let mut lines = raw.split("\r\n");
-    info!("Lines: {:?}", lines);
     let Some(status_line) = lines.next() else {
         return Err(io::Error::new(io::ErrorKind::InvalidData, 
             format!("Malformed request")))
     };
-    info!("Status line: {}", status_line);
 
     let mut status_line_split = status_line.split_whitespace();
     let Some(method) = status_line_split.next() else {
         return Err(io::Error::new(io::ErrorKind::InvalidData, 
             format!("Malformed request when parsing method")))
     };
-    info!("Method: {}", method);
 
     let Some(path) = status_line_split.next() else {
         return Err(io::Error::new(io::ErrorKind::InvalidData, 
             format!("Malformed request when parsing path")))
     };
-    info!("Path: {}", path);
 
     let mut raw_split = raw.split("\r\n\r\n");
     let Some(headers) = raw_split.next() else {
         return Err(io::Error::new(io::ErrorKind::InvalidData, 
             format!("Malformed request when parsing headers")))
     };
-    info!("Headers: {}", headers);
 
     let body = raw_split.next().unwrap_or("");
-    info!("Body: {}", headers);
 
     let host = headers.split("\r\n").find(|line| line.to_lowercase().starts_with("host")).unwrap_or("").split(":").skip(1).next().unwrap_or("");
-    info!("Host: {}", host);
     let req = FlowRequest::new(id.to_string(), method.to_string(), path.to_string(), host.to_string(), headers.to_string(), body.to_string(), raw.to_string());
-    info!("Parsed request: {:?}", req);
 
     Ok(req)
 }
@@ -128,7 +119,7 @@ enum Flow {
     Response(FlowResponse),
 }
 
-async fn handle_connection(tx: Arc<tokio::sync::mpsc::Sender<Flow>>, mut tls_stream: TlsStream<TcpStream>, req_raw: String, scripts: &Arc<Mutex<HashMap<String, (Script, String, bool)>>>) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+async fn handle_server_connection(tx: Arc<tokio::sync::mpsc::Sender<Flow>>, tls_stream: &mut TlsStream<TcpStream>, req_raw: String, scripts: &Arc<Mutex<HashMap<String, (Script, String, bool)>>>) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let scripts = scripts.lock().await;
     let mut req = req_raw.clone();
     info!("Scripts: {:?}", scripts.keys());
@@ -152,7 +143,7 @@ async fn handle_connection(tx: Arc<tokio::sync::mpsc::Sender<Flow>>, mut tls_str
 
     // Send to and receive from server
     info!("Forwarding to client");
-    let res = forward_to_client(req).await?;
+    let res = forward_to_server(req).await?;
     info!("Parsing response");
     let flow_res = Flow::Response(parse_response(res, id).await?);
     // Send response back to client
@@ -163,7 +154,6 @@ async fn handle_connection(tx: Arc<tokio::sync::mpsc::Sender<Flow>>, mut tls_str
 
     let _ = tx.send(flow_res).await;
     info!("Sent response flow");
-
     Ok(())
 }
 
@@ -191,8 +181,14 @@ pub async fn start_proxy(app_handle: AppHandle, state: Arc<AppState>) -> Result<
                 let issuer = issuer.clone();
                 let tx = tx.clone();
                 tokio::spawn(async move {
-                    let (req_raw, tls_stream) = handle_client_connection(stream, issuer).await?;
-                    handle_connection(tx, tls_stream, req_raw, &scripts_clone).await?;
+                    let mut tls_stream = handle_client_connection(stream, issuer).await?;
+                    loop {
+                        let req_raw = match read_http_request(&mut tls_stream).await {
+                            Ok(r) => r,
+                            Err(_) => break
+                        };
+                        let _ = handle_server_connection(tx.clone(), &mut tls_stream, req_raw, &scripts_clone).await?;
+                    }
 
                     Ok::<(), Box<dyn Error + Send + Sync + 'static>>(())
                 });
@@ -203,9 +199,9 @@ pub async fn start_proxy(app_handle: AppHandle, state: Arc<AppState>) -> Result<
 
     while let Some(flow) = rx.recv().await {
         if let Flow::Request(req) = &flow {
-            let _ = app_handle.emit("request-received", json!(req));
+            let _ = app_handle.emit("request-received", json!(req)).inspect_err(|e| error!("Flow receiver error (request): {e}"));
         } else if let Flow::Response(res) = &flow {
-            let _ = app_handle.emit("response-received", json!(res));
+            let _ = app_handle.emit("response-received", json!(res)).inspect_err(|e| error!("Flow receiver error (response): {e}"));
         }
     }
 
@@ -213,7 +209,7 @@ pub async fn start_proxy(app_handle: AppHandle, state: Arc<AppState>) -> Result<
     Ok(())
 }
 
-async fn handle_client_connection(mut stream: TcpStream, issuer: Arc<Issuer<'static, KeyPair>>) -> io::Result<(String, TlsStream<TcpStream>)> {
+async fn handle_client_connection(mut stream: TcpStream, issuer: Arc<Issuer<'static, KeyPair>>) -> io::Result<TlsStream<TcpStream>> {
     let req = read_request(&mut stream).await?;
     if !req.starts_with("CONNECT") {
         return Err(io::Error::new(io::ErrorKind::Other, "Expected CONNECT"));
@@ -233,6 +229,10 @@ async fn handle_client_connection(mut stream: TcpStream, issuer: Arc<Issuer<'sta
 
     let mut tls_stream = tls_acceptor.accept(stream).await?;
 
+    Ok(tls_stream)
+}
+
+async fn read_http_request(tls_stream: &mut TlsStream<TcpStream>) -> io::Result<String> {
     loop {
         let mut buf = vec![0u8; 4096];
         let n = tls_stream.read(&mut buf[..]).await?;
@@ -240,13 +240,13 @@ async fn handle_client_connection(mut stream: TcpStream, issuer: Arc<Issuer<'sta
             break;
         }
         let raw = String::from_utf8_lossy(&buf[..n]);
-        return Ok((raw.to_string(), tls_stream))
+        return Ok(raw.to_string())
     }
 
-    Err(io::Error::new(io::ErrorKind::Other, "No valid response received"))
+    Ok("".to_string())
 }
 
-async fn forward_to_client(raw: String) -> io::Result<Response> {
+async fn forward_to_server(raw: String) -> io::Result<Response> {
     let client = Client::new();
     let raw_owned = raw.clone();
 
@@ -311,8 +311,6 @@ async fn forward_to_client(raw: String) -> io::Result<Response> {
         if method == "POST" {
             req = req.body(body.to_string());
         }
-
-        info!("{:?}", req);
 
         let res = req.send().await.map_err(|e| {
             io::Error::new(io::ErrorKind::InvalidData, 

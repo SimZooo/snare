@@ -71,7 +71,7 @@
     </div>
     <PaneGroup direction="horizontal" class="">
         <Pane class="bg-[#2F323A] rounded flex flex-col">
-            <div class="text-md w-full h-13 flex flex-row pl-3 items-center justify-between pr-5">
+            <div class="w-full h-11 flex flex-row pl-3 items-center justify-between pr-5">
                 <div class="w-full h-full flex flex-row gap-5 justify-between items-center">
                     <p class="">{current.request ? current.request.destination : ""}</p>
                     <button class="bg-[#25272D] p-1 h-2/3 rounded hover:cursor-pointer" onclick={() => forward_request(current, http_editor_text)}>
@@ -79,24 +79,24 @@
                     </button>
                 </div>
             </div>
-            <div class="h-0.75 w-full bg-[#25272D]">
+            <div class="h-0.5 w-full bg-[#25272D]">
             </div>
             <CodeMirror bind:value={http_editor_text} class="w-full h-full flex-2 text-md min-h-0" {extensions}/>
-            <div class="h-0.75 w-full bg-[#25272D]">
+            <div class="h-0.5 w-full bg-[#25272D]">
             </div>
             <div class="w-full h-11">
             </div>
         </Pane>
         <PaneResizer class="w-1 cursor-col-resize" />
         <Pane class="bg-[#2F323A] rounded flex flex-col">
-            <div class="text-md w-full h-13 flex flex-row pl-3 items-center justify-between pr-5" >
+            <div class="text-md w-full h-11 flex flex-row pl-3 items-center justify-between pr-5" >
                 <p>Response</p>
                 <p>{current_response?.headers?.find((header) => header[0] === "content-length")?.[1] ?? 0} bytes</p>
             </div>
-            <div class="h-0.75 w-full bg-[#25272D]">
+            <div class="h-0.5 w-full bg-[#25272D]">
             </div>
             <CodeMirror bind:value={response_editor_text} class="w-full h-full flex-2 text-md min-h-0" {extensions}/>
-            <div class="h-0.75 w-full bg-[#25272D]">
+            <div class="h-0.5 w-full bg-[#25272D]">
             </div>
             <div class="w-full h-11">
             </div>
